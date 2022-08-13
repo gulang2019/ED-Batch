@@ -51,6 +51,10 @@ public:
   void stop(std::string name) {
     cumtimes[name] += (timers[name]).stop();
   }
+  void cumint(std::string name, int value){
+    if (cumints.count(name) == 0) cumints[name] = 0;
+    cumints[name] += value;
+  }
   void show() {
     std::multimap<double, std::string> cumtimes_dst = flip_map(cumtimes);
     double total_time = 0.0;
@@ -58,12 +62,18 @@ public:
       total_time += item.first;
     }
     for (auto &item : cumtimes_dst) {
+      if (item.second.find("EXT") == std::string::npos)
+        continue;
       std::cout << std::setprecision(4) << std::setw(11) << item.first << '\t' << (100.0*item.first/total_time) << "%\t" << item.second << std::endl;
     }
     std::cout << std::setprecision(4) << std::setw(11) << total_time << "\t100%\t(total time)" << std::endl;
+    for (auto kv: cumints){
+      std::cout << kv.first << ":\t" << kv.second << std::endl;
+    }
   }
   std::map<std::string, double> cumtimes;
   std::map<std::string, Timing> timers;
+  std::map<std::string, int> cumints;
 };
 
 } // namespace dynet

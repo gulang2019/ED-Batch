@@ -8,6 +8,7 @@ set(dynet_library_SRCS
     dict.cc
     dim.cc
     dynet.cc
+    batching.cc
     exec.cc
     expr.cc
     fast-lstm.cc
@@ -86,6 +87,7 @@ dim.h
 dynet.h
 dynet-helper.h
 except.h
+batching.h
 exec.h
 expr.h
 fast-lstm.h
@@ -262,7 +264,7 @@ if(WITH_CUDA_BACKEND)
   if(CUDA_ARCH)
     list(APPEND CUDA_NVCC_FLAGS "-arch=sm_${CUDA_ARCH};-std=c++11;-DVERBOSE;-DEIGEN_USE_GPU;-DHAVE_CUDA;-D_FORCE_INLINES")
   else()
-    list(APPEND CUDA_NVCC_FLAGS "-gencode;arch=compute_30,code=sm_30;-gencode;arch=compute_35,code=sm_35;-gencode;arch=compute_37,code=sm_37;-gencode;arch=compute_50,code=sm_50;-gencode;arch=compute_52,code=sm_52;-gencode;arch=compute_52,code=compute_52;-std=c++11;-DVERBOSE;-DEIGEN_USE_GPU;-DHAVE_CUDA;-D_FORCE_INLINES")
+    list(APPEND CUDA_NVCC_FLAGS "-gencode;arch=compute_35,code=sm_35;-gencode;arch=compute_37,code=sm_37;-gencode;arch=compute_50,code=sm_50;-gencode;arch=compute_52,code=sm_52;-gencode;arch=compute_52,code=compute_52;-std=c++11;-DVERBOSE;-DEIGEN_USE_GPU;-DHAVE_CUDA;-D_FORCE_INLINES")
   endif()
   if(CUDNN_FOUND)
     list(APPEND CUDA_NVCC_FLAGS "-DHAVE_CUDNN")
