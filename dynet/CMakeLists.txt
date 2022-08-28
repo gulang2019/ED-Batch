@@ -8,8 +8,8 @@ set(dynet_library_SRCS
     dict.cc
     dim.cc
     dynet.cc
-    batching.cc
     exec.cc
+    exec-ooc.cc
     expr.cc
     fast-lstm.cc
     globals.cc
@@ -87,7 +87,6 @@ dim.h
 dynet.h
 dynet-helper.h
 except.h
-batching.h
 exec.h
 expr.h
 fast-lstm.h

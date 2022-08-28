@@ -62,8 +62,8 @@ public:
       total_time += item.first;
     }
     for (auto &item : cumtimes_dst) {
-      if (item.second.find("EXT") == std::string::npos)
-        continue;
+      // if (item.second.find("EXT") == std::string::npos)
+      //   continue;
       std::cout << std::setprecision(4) << std::setw(11) << item.first << '\t' << (100.0*item.first/total_time) << "%\t" << item.second << std::endl;
     }
     std::cout << std::setprecision(4) << std::setw(11) << total_time << "\t100%\t(total time)" << std::endl;

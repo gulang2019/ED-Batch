@@ -66,6 +66,8 @@ public:
   std::vector<int> concat;
   // Concatenated arguments
   std::vector<const Tensor*> arg_nfxs;
+  // The super node dim 
+  int dim;
 };
 
 class BatchedExecutionEngine : public ExecutionEngine {
@@ -84,7 +86,15 @@ class BatchedExecutionEngine : public ExecutionEngine {
   void backward(bool full = false) override;
   void backward(VariableIndex from_where, bool full = false) override;
   void garbage_collect();
+  void visualize(int upto, std::string filename, std::string graphname, std::unordered_set<std::pair<int, int>, OoC::hash_pair> * mem_transfer_edges);
+
  private:
+  
+  static int graph_id;
+  static OoC::DynamicBatching db;
+  // a sophisticated implementation of OoC's inference stage
+  void getBatches(VariableIndex upto, VariableIndex & batch_id);
+
   const Tensor& incremental_forward_no_update(VariableIndex upto,
                                               int autobatch_strategy);
   void combine_tensors(const std::vector<VariableIndex>& batch_ids,

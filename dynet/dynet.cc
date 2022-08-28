@@ -67,7 +67,7 @@ void Node::autobatch_reshape_concatonly(const ComputationGraph & cg,
   }
 }
 
-ComputationGraph::ComputationGraph() {
+ComputationGraph::ComputationGraph(){
   if(autobatch_flag) {
     ee.reset(new BatchedExecutionEngine(*this));
   } else {

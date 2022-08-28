@@ -12,6 +12,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <OoC.h>
 
 #include "dynet/aligned-mem-pool.h"
 #include "dynet/init.h"
@@ -493,7 +494,7 @@ struct ComputationGraph {
                                                // nodes)
 
   std::unique_ptr<ExecutionEngine> ee;  // handles the execution
-
+ 
  private:
   unsigned graph_id;
   // flag of whether to compute immediately for each expression, i.e., an
