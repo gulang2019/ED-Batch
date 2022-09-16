@@ -128,7 +128,7 @@ DynetParams extract_dynet_params(int& argc,
              startswith(arg, "--dynet_autobatch")) {
       if (!has_arg(argi, argc, argv)) {
         throw std::invalid_argument("[dynet] --dynet-autobatch expects an argument (0 for none 1 for on)");
-      } else {
+      } else { 
         string a2 = get_arg(argi, argv);
         istringstream c(a2); c >> params.autobatch;
         remove_args(argc, argv, argi, 2);
@@ -143,6 +143,17 @@ DynetParams extract_dynet_params(int& argc,
       } else {
         string a2 = get_arg(argi, argv);
         istringstream c(a2); c >> params.profiling;
+        remove_args(argc, argv, argi, 2);
+      }
+    }
+
+    else if (startswith(arg, "--o") || 
+            startswith(arg, "--output")){
+      if (!has_arg(argi, argc, argv)) {
+        throw std::invalid_argument("[dynet] --output expects an argument (store_file)");
+      } else {
+        string a2 = get_arg(argi, argv);
+        istringstream c(a2); c >> params.store_file;
         remove_args(argc, argv, argi, 2);
       }
     }
@@ -268,6 +279,9 @@ void initialize(DynetParams& params) {
   }
   device_manager->add(d);
   default_device = device_manager->get(default_index);
+
+  // store path 
+  store_file = params.store_file;
 #if HAVE_CUDA
   if (default_device->type == DeviceType::GPU) {
     auto default_gpu_device = static_cast<Device_GPU *>(default_device);

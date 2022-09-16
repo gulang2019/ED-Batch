@@ -28,6 +28,7 @@ struct DynetParams {
   bool cpu_requested; /**< CPU requested in multi-device case */
   int requested_gpus; /**< Number of requested GPUs */
   std::vector<int> gpu_mask; /**< List of required GPUs by ids */
+  std::string store_file; /** <the file to store profiling results>*/
 };
 
 DynetParams extract_dynet_params(int& argc, char**& argv, bool shared_parameters = false);

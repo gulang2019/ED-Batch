@@ -10,6 +10,7 @@ set(dynet_library_SRCS
     dynet.cc
     exec.cc
     exec-ooc.cc
+    ooc-exec.cc
     expr.cc
     fast-lstm.cc
     globals.cc

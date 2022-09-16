@@ -19,7 +19,7 @@ namespace dynet {
       COMPLEX,
       affine, matmul, transpose,
       vanilla_lstm_gates, vanilla_lstm_h, vanilla_lstm_c,
-      conv2d
+      conv2d, bbmark
     };
   }
 

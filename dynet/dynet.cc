@@ -487,5 +487,12 @@ void ComputationGraph::print_graphviz() const {
   }
 }
 
+bool ComputationGraph::check_bb_mark() const{
+  auto iter = nodes.begin();
+  while(iter!=nodes.end()){
+    
+  }
+}
+
 }  // namespace dynet
 

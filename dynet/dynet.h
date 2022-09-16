@@ -487,6 +487,8 @@ struct ComputationGraph {
    */
   unsigned get_id() const { return graph_id; };
 
+  bool check_bb_mark() const;
+
   // data
   std::vector<Node*> nodes;  // **stored in topological order**
   std::vector<VariableIndex> parameter_nodes;  // nodes that contain parameters
@@ -494,7 +496,7 @@ struct ComputationGraph {
                                                // nodes)
 
   std::unique_ptr<ExecutionEngine> ee;  // handles the execution
- 
+
  private:
   unsigned graph_id;
   // flag of whether to compute immediately for each expression, i.e., an

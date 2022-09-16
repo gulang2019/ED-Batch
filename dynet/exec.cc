@@ -294,8 +294,14 @@ union CopyArgs {
 static_assert(sizeof(float*) == sizeof(std::size_t),
               "Pointer size must be the same size as size_t");
 
-
 OoC::DynamicBatching BatchedExecutionEngine::db("train", "information_entropy");
+OoC::PatternCache BatchedExecutionEngine::pattern_cache;
+OoC::Trie BatchedExecutionEngine::head;
+vector<OoC::typeInfo> BatchedExecutionEngine::stypes;
+SigMap BatchedExecutionEngine::sigmap;
+OoC::QLearningModel model;
+OoC::Scheduler& BatchedExecutionEngine::scheduler = model;
+
 int BatchedExecutionEngine::graph_id(0);
 // copies the list of tensors into a single contig tensor (tout).
 // allocates the memory for tout.
@@ -303,6 +309,7 @@ void BatchedExecutionEngine::combine_tensors(
     const std::vector<VariableIndex>& batch_ids,
     int aid,
     Tensor &tout) {
+  timer.start("EXT combine tensors");
   AlignedMemoryPool *mempool = tout.device->pools[(int)DeviceMempool::FXS];
   // Determine needed memory for tout and get list of nodes corresponding to
   // specified argument.
@@ -316,8 +323,10 @@ void BatchedExecutionEngine::combine_tensors(
   tout.d = Dim({total_dsize});
 
   // allocate memory for tout
+  timer.start("EXT combined allocation");
   float* dest =
       static_cast<float*>(mempool->allocate(total_dsize * sizeof(float)));
+  timer.stop("EXT combined allocation");
 
 #if HAVE_CUDA
   vector<CopyArgs> locs(batch_ids.size() * 3);
@@ -352,16 +361,21 @@ void BatchedExecutionEngine::combine_tensors(
     float** srcs = static_cast<float**>(basemem);
     float** trgs = static_cast<float**>(basemem) + TRG;
     std::size_t* lens = static_cast<std::size_t*>(basemem) + LEN;
+    timer.start("EXT idx transfer");
     CUDA_CHECK(cudaMemcpyAsync(basemem,
                           &(locs)[0],
                           locs.size() * sizeof(CopyArgs),
                           cudaMemcpyHostToDevice,
                           static_cast<Device_GPU*>(tout.device)->estream->stream()));
+    timer.stop("EXT idx transfer");
+    timer.start("EXT memcpy");
     gpu::parallel_memcpy(batch_ids.size(), max_length, srcs, trgs, lens);
+    timer.stop("EXT memcpy");
 #endif
   } else if (tout.device->type == DeviceType::CPU) {
     ; // Nothing more to do, memory was already copied.
   } else { throw std::runtime_error("Bad device type"); }
+  timer.stop("EXT combine tensors");
 }
 
 void BatchedExecutionEngine::accumulate_tensors(
@@ -424,6 +438,7 @@ void BatchedExecutionEngine::invalidate() {
   node2batch.clear();
   ndEdfs.clear();
   nfx_cache.clear();
+  snodes.clear();
 }
 
 void BatchedExecutionEngine::invalidate(unsigned i) {
@@ -489,8 +504,12 @@ void BatchedExecutionEngine::visualize(int upto, string filename, string graphna
   file << "digraph " <<  graphname << " {\n";
   function<string(int)> getName = [&](int nid){
     auto sig = cg.nodes[nid]->autobatch_sig(cg, sigmap);
-    return OoC::type2name[sigmap.sig2type(sig)] 
+    string ret =  OoC::type2name[sigmap.sig2type(sig)] 
     + "_" + to_string(sig) + "_" + to_string(nid) + "_" + to_string(node2batch[nid]);
+    if (autobatch_flag == 7){
+      ret += "_" + to_string(node2mem_pos[nid]) + "_" + to_string(node2sid[nid]);
+    }
+    return ret;
   };
   for (int j = num_nodes_evaluated; j <= upto; j++){
     const Node * node = cg.nodes[j];
@@ -524,10 +543,16 @@ void BatchedExecutionEngine::visualize(int upto, string filename, string graphna
 
 const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     VariableIndex upto, int autobatch_strategy) {
+  timer.clear();
   // cerr << "running graph" << endl; cg.print_graphviz();
 
   if (upto >= num_nodes_evaluated) {
-    NamedTimer localTimer;
+    if (autobatch_strategy == 7){
+      forward_OoC(upto);
+      return get_nfx(upto);
+    }
+
+    OoC::Timer localTimer;
     localTimer.start("total");
     if (autobatch_strategy == 0) autobatch_strategy = 1;
     string current_batch_name;
@@ -1178,6 +1203,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     // 2.5 print some debug info
     cerr << "Forward Call Batch_strategy " << autobatch_strategy  << " : " << batch_id << " kernels."  << endl;
     timer.cumint("n_kernels", batch_id);
+    localTimer.cumint("n_kernels", batch_id);
 
     if (profiling_flag > 1) {
       cout << "Forward Call batch_strategy " << autobatch_strategy  << " : " << batch_id << " kernels."  << endl;
@@ -1376,7 +1402,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
                 } 
               }
               localTimer.start("combine tensors");
-              localTimer.cumint("combine tensors", 1);
+              localTimer.cumint("n_memtransfer", my_batch.ids.size() * node2size[my_batch.ids.front()]);
               combine_tensors(my_batch.ids, i, *my_xsi);
               localTimer.stop("combine tensors");
             }
@@ -1403,8 +1429,11 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     localTimer.stop("execution");
     localTimer.stop("total");
     localTimer.show();
+    if (store_file.size()){
+      localTimer.save(store_file);
+    }
     string graphname = "B" + to_string(autobatch_strategy) + "_" + to_string(graph_id++);
-    visualize(upto, "./pics/"+graphname+".gv", graphname, &mem_transfer_edges);
+    visualize(upto, "./pics/" + graphname + ".gv", graphname, &mem_transfer_edges);
     free(node2profid);
   }
 

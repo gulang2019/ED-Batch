@@ -325,8 +325,8 @@ VanillaLSTMBuilder::VanillaLSTMBuilder(unsigned layers,
   local_model = model.add_subcollection("vanilla-lstm-builder");
   for (unsigned i = 0; i < layers; ++i) {
     // i
-    Parameter p_x2i = local_model.add_parameters({hidden_dim * 4, layer_input_dim});
-    Parameter p_h2i = local_model.add_parameters({hidden_dim * 4, hidden_dim});
+    Parameter p_x2i = local_model.add_parameters({hidden_dim * 4, layer_input_dim}, ParameterInitConst(0.1f));
+    Parameter p_h2i = local_model.add_parameters({hidden_dim * 4, hidden_dim}, ParameterInitConst(0.1f));
     //Parameter p_c2i = model.add_parameters({hidden_dim, hidden_dim});
     Parameter p_bi = local_model.add_parameters({hidden_dim * 4}, ParameterInitConst(0.f));
 
@@ -482,6 +482,7 @@ Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
   Expression in = x;
   if ((dropout_rate > 0.f || dropout_rate_h > 0.f) && !dropout_masks_valid) set_dropout_masks(x.dim().bd);
   for (unsigned i = 0; i < layers; ++i) {
+    mark_basic_block(_cg, -1, true);
     const vector<Expression>& vars = param_vars[i];
 
     Expression i_h_tm1, i_c_tm1;
@@ -521,15 +522,20 @@ Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
       else
         tmp = affine_transform({vars[_BI], vars[_X2I], in});
     }
+    mark_basic_block(_cg, -4, true);
     i_ait = pick_range(tmp, 0, hid);
     i_aft = pick_range(tmp, hid, hid * 2);
     i_aot = pick_range(tmp, hid * 2, hid * 3);
     i_agt = pick_range(tmp, hid * 3, hid * 4);
+    if (has_prev_state) mark_basic_block(_cg, -2, true);
+    else mark_basic_block(_cg, -3, true);
+    
     Expression i_it = logistic(i_ait);
     if (forget_bias != 0.0)
         tmp = logistic(i_aft + forget_bias);
     else
         tmp= logistic(i_aft);
+
 
     Expression i_ft = tmp;
     Expression i_ot = logistic(i_aot);

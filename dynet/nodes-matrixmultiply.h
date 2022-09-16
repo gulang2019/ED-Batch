@@ -8,7 +8,7 @@ namespace dynet {
 
 // y = x_1 * x_2
 struct MatrixMultiply : public Node {
-  explicit MatrixMultiply(const std::initializer_list<VariableIndex>& a) : Node(a) {}
+  explicit MatrixMultiply(const std::initializer_list<VariableIndex>&a, bool sharedA = true): Node(a), sharedA(sharedA){}
   virtual bool supports_multibatch() const override { return true; }
   virtual int autobatch_sig(const ComputationGraph &cg, SigMap &sm) const override;
   virtual std::vector<int> autobatch_concat(const ComputationGraph & cg) const override;
@@ -19,6 +19,7 @@ struct MatrixMultiply : public Node {
                                  Tensor& fx) const override {
     autobatch_reshape_concatonly(cg, batch_ids, concat, xs, fx);
   }
+  bool sharedA;
   DYNET_NODE_DEFINE_DEV_IMPL()
 };
 

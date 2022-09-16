@@ -120,7 +120,7 @@ void BatchedExecutionEngine::getBatches(VariableIndex upto, VariableIndex & batc
                     isNewType = true;
                     hashKey2typeId[hashKey] = types.size();
                     types.push_back({});
-                    types.back().weight = pattern->weight;
+                    types.back().weight = pattern->n_batch;
                 }
                 const int& stid = hashKey2typeId[hashKey];
                 auto & stype = types[stid];
@@ -147,8 +147,8 @@ void BatchedExecutionEngine::getBatches(VariableIndex upto, VariableIndex & batc
                     maxBid = max(bid, maxBid);
                 }
                 
-                if (maxBid != pattern->weight - 1){
-                  fprintf(stderr, "[ERROR]: maxBid %d, pattern->weight %d\n", maxBid, pattern->weight);
+                if (maxBid != pattern->n_batch - 1){
+                  fprintf(stderr, "[ERROR]: maxBid %d, pattern->weight %d\n", maxBid, pattern->n_batch);
                   for (auto node: subgraph){
                     fprintf(stderr, "[%s, %d, %d]\t:", type2name[nodes[node].type].c_str(), nodes[node].bid, node);
                     for (auto from: nodes[node].preds) {
@@ -307,13 +307,3 @@ void BatchedExecutionEngine::getBatches(VariableIndex upto, VariableIndex & batc
 }
 
 } // namespace dynet
-
-/*
-for (batch: batches){
-    for (int i = 0; i < batch.pattern->size; i++){
-        for (auto snode: batch){
-            batches[snode.bid+] = 
-        }
-    }
-}
-*/

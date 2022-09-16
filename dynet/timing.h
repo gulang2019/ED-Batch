@@ -44,6 +44,12 @@ public:
       show();
     }
   }
+  
+  void clear() {
+    for (auto& kv: cumtimes) kv.second = 0;
+    for (auto& kv: cumints) kv.second = 0;
+  }
+
   void start(std::string name) {
     Timing t;
     timers[name] = t;

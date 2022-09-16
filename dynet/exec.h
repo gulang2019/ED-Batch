@@ -87,13 +87,36 @@ class BatchedExecutionEngine : public ExecutionEngine {
   void backward(VariableIndex from_where, bool full = false) override;
   void garbage_collect();
   void visualize(int upto, std::string filename, std::string graphname, std::unordered_set<std::pair<int, int>, OoC::hash_pair> * mem_transfer_edges);
-
+  void visualize_snode(std::string filname, std::string graphname);
+  void export_graph(VariableIndex upto, std::string filename);
+  void export_snode_graph(std::string filename);
  private:
   
   static int graph_id;
   static OoC::DynamicBatching db;
+  static OoC::PatternCache pattern_cache;
+  static OoC::Trie head;
+  static std::vector<OoC::typeInfo> stypes;
+  static OoC::Scheduler& scheduler;
+  // static std::vector<OoC::typeInfo> stypes;
   // a sophisticated implementation of OoC's inference stage
   void getBatches(VariableIndex upto, VariableIndex & batch_id);
+  OoC::Timer localTimer;
+  std::vector<OoC::supernodeInfo> snodes;
+  void construct_snode_graph_OoC(VariableIndex upto);
+  void construct_snode_graph_from_bb_OoC(VariableIndex upto);
+  void schedule_snode_graph_OoC();
+  
+  enum {
+    TRAIN,
+    INFERENCE
+  } schedule_mode;
+  void schedule_snode_graph_rl();
+  // store execution order and do memory allocation
+  void memory_allocation(BatchInfo & my_batch);
+  void execution(int upto);
+  bool commit_batch_OoC(int tid);
+  void forward_OoC(VariableIndex upto);
 
   const Tensor& incremental_forward_no_update(VariableIndex upto,
                                               int autobatch_strategy);
@@ -105,12 +128,19 @@ class BatchedExecutionEngine : public ExecutionEngine {
   const Tensor& get_nfx(VariableIndex i);
   std::vector<Tensor> nfx_cache;
   std::vector<Tensor> ndEdfs;
-  VariableIndex num_nodes_evaluated, num_batches_evaluated;
+  VariableIndex num_nodes_evaluated, num_batches_evaluated, num_batch_committed;
   // Information about the batched computation graph
   std::vector<VariableIndex> node2batch; // length: number of nodes
   std::vector<size_t> node2offset, node2size; // length: number of nodes
   std::vector<BatchInfo> batches; // length: number of batches
-  SigMap sigmap;
+  static SigMap sigmap;
+
+  // For debug 
+  std::vector<int> node2sid;
+  std::vector<int> node2mem_pos;
+  int mem_id; 
+  void visualize_trie();
+
 };
 
 } // namespace dynet

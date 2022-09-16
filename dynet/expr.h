@@ -607,6 +607,20 @@ Expression operator*(const Expression& x, const Expression& y);
 
 /**
  * \ingroup arithmeticoperations
+ * \brief Matrix multiplication
+ * \details Multiply two matrices together. Like standard matrix multiplication, the
+ *          second dimension of x and the first dimension of y must match.
+ *
+ * \param x The left-hand matrix
+ * \param y The right-hand matrix
+ * \param sharedA whether x is shared among operations 
+ *
+ * \return An expression x times y
+ */
+Expression matmul(const Expression& x, const Expression& y, bool sharedA = true);
+
+/**
+ * \ingroup arithmeticoperations
  * \brief Matrix-scalar multiplication
  * \details Multiply an expression component-wise by a scalar.
  *
@@ -2637,6 +2651,14 @@ Expression vanilla_lstm_c(const Expression& c_tm1, const Expression& gates_t);
  */
 
 Expression vanilla_lstm_h(const Expression& c_t, const Expression& gates_t);
+
+/**
+ * \brief a pseudo-node that marks the begin/end of the basic block
+ * 
+ */
+
+void mark_basic_block(ComputationGraph *cg, const int block_id, const bool is_begin);
+
 
 }  // namespace dynet
 

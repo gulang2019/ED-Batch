@@ -72,6 +72,7 @@ Expression operator-(real x, const Expression& y) { return Expression(y.pg, y.pg
 Expression operator-(const Expression& x, real y) { return -(y - x); }
 Expression operator*(const Expression& x, const Expression& y) { return Expression(x.pg, x.pg->add_function<MatrixMultiply>({x.i, y.i})); }
 Expression operator*(const Expression& x, float y) { return Expression(x.pg, x.pg->add_function<ConstScalarMultiply>({x.i}, y)); }
+Expression matmul(const Expression& x, const Expression& y, bool sharedA) { return Expression(x.pg, x.pg->add_function<MatrixMultiply>({x.i, y.i}, sharedA)); }
 Expression operator/(const Expression& x, const Expression& y) { return Expression(x.pg, x.pg->add_function<CwiseQuotient>({x.i, y.i})); }
 Expression cmult(const Expression& x, const Expression& y) { return Expression(x.pg, x.pg->add_function<CwiseMultiply>({x.i, y.i})); }
 Expression cdiv(const Expression& x, const Expression& y) { return Expression(x.pg, x.pg->add_function<CwiseQuotient>({x.i, y.i})); }
@@ -329,5 +330,14 @@ Expression concatenate_cols(const std::vector<Expression> &xs) { return detail::
 
 Expression concatenate(const std::initializer_list<Expression> &xs, unsigned d) { return detail::f<Concatenate>(xs, d); }
 Expression concatenate(const std::vector<Expression> &xs, unsigned d) { return detail::f<Concatenate>(xs, d); }
+
+
+////////////////////////////////////////////////
+// Functions with basic block optimization    //
+////////////////////////////////////////////////
+
+void mark_basic_block(ComputationGraph *cg, const int block_id, const bool is_begin) {
+  if (autobatch_flag != 7) return;
+  cg->add_function<BBMark>(block_id, is_begin);}
 
 }  // namespace dynet

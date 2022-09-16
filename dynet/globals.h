@@ -11,6 +11,7 @@ class NamedTimer;
 extern std::mt19937* rndeng;
 extern Device* default_device;
 extern NamedTimer timer; // debug timing in executors.
+extern std::string store_file;
 
 } // namespace dynet
 

@@ -31,7 +31,8 @@ int MatrixMultiply::autobatch_sig(const ComputationGraph & cg, SigMap &sm) const
   // TODO do we want to treat different dimensions of first/second arg differently?
   if(dim.bd == 1) {
     Sig s(nt::matmul);
-    s.add_node(args[0]);
+    if (sharedA) s.add_node(args[0]);
+    else s.add_dim(cg.nodes[args[0]]->dim);
     s.add_dim(cg.nodes[args[1]]->dim);
     return sm.get_idx(s);
   } else {
@@ -42,6 +43,7 @@ int MatrixMultiply::autobatch_sig(const ComputationGraph & cg, SigMap &sm) const
 std::vector<int> MatrixMultiply::autobatch_concat(const ComputationGraph & cg) const {
   vector<int> ret(args.size(), 0);
   if (dim.bd == 1) { ret[1] = 1; }
+  if (!sharedA) ret[0] = 1;
   return ret;
 }
 
