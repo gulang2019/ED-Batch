@@ -310,6 +310,7 @@ void BatchedExecutionEngine::combine_tensors(
     int aid,
     Tensor &tout) {
   localTimer.start("EXT combine tensors");
+  localTimer.start("EXT combine preparation");
   AlignedMemoryPool *mempool = tout.device->pools[(int)DeviceMempool::FXS];
   // Determine needed memory for tout and get list of nodes corresponding to
   // specified argument.
@@ -321,12 +322,14 @@ void BatchedExecutionEngine::combine_tensors(
     arg_nodes[i] = nid;
   }
   tout.d = Dim({total_dsize});
+  localTimer.stop("EXT combine preparation");
 
   // allocate memory for tout
   localTimer.start("EXT combined allocation");
   float* dest =
       static_cast<float*>(mempool->allocate(total_dsize * sizeof(float)));
   localTimer.stop("EXT combined allocation");
+  localTimer.start("EXT prepare args");
 
 #if HAVE_CUDA
   vector<CopyArgs> locs(batch_ids.size() * 3);
@@ -354,14 +357,15 @@ void BatchedExecutionEngine::combine_tensors(
     } else { throw std::runtime_error("Bad device type"); }
     dest += sz; // pointer arith
   }
+  localTimer.stop("EXT prepare args");
   if (tout.device->type == DeviceType::GPU) {
 #if HAVE_CUDA
+    localTimer.start("EXT idx transfer");
     size_t req_sz = batch_ids.size() * 3 * sizeof(CopyArgs);
     void* basemem = mempool->allocate(req_sz);
     float** srcs = static_cast<float**>(basemem);
     float** trgs = static_cast<float**>(basemem) + TRG;
     std::size_t* lens = static_cast<std::size_t*>(basemem) + LEN;
-    localTimer.start("EXT idx transfer");
     CUDA_CHECK(cudaMemcpyAsync(basemem,
                           &(locs)[0],
                           locs.size() * sizeof(CopyArgs),

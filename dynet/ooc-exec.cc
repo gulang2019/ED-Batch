@@ -308,6 +308,7 @@ namespace dynet
                     Tensor *my_xsi = new Tensor;
                     my_xsi->device = node->device;
                     my_xsi->mem_pool = DeviceMempool::FXS;
+                    localTimer.start("check contig");
 
                     // check contig memory
                     auto it = my_batch.ids.begin();
@@ -324,6 +325,7 @@ namespace dynet
                         contig = contig && v == min_node + tot_arg;
                         tot_arg += node2size[aid];
                     }
+                    localTimer.stop("check contig");
                     if (contig)
                     { // if contig, use current mem for xs_i
                         // xs[i] = &batched_nfxs[...];
@@ -335,10 +337,9 @@ namespace dynet
                     else
                     { // if non-contig, copy xs_i into new mem.
                         // 2.b) the inputs need to be concatenated, and are not contiguous
-                        localTimer.start("combine tensors");
                         localTimer.cumint("n_memtransfer", my_batch.ids.size() * node2size[my_batch.ids.front()]);
+                        localTimer.cumint("n_combine", 1);
                         combine_tensors(my_batch.ids, i, *my_xsi);
-                        localTimer.stop("combine tensors");
                     }
                     my_batch.arg_nfxs[i] = my_xsi;
                 }
@@ -419,6 +420,7 @@ namespace dynet
                         my_xsi->mem_pool = DeviceMempool::FXS;
 
                         // check contig memory
+                        localTimer.start("check contig");
                         auto it = my_batch.ids.begin();
                         auto itend = my_batch.ids.end();
                         VariableIndex aid = cg.nodes[*(it++)]->args[i];
@@ -433,6 +435,7 @@ namespace dynet
                             contig = contig && v == min_node + tot_arg;
                             tot_arg += node2size[aid];
                         }
+                        localTimer.stop("check contig");
                         if (contig)
                         { // if contig, use current mem for xs_i
                             // xs[i] = &batched_nfxs[...];
@@ -449,10 +452,9 @@ namespace dynet
                                 for (auto id : my_batch.ids)
                                     mem_transfer_edges.insert({cg.nodes[id]->args[i], id});
                             }
-                            localTimer.start("combine tensors");
                             localTimer.cumint("n_memtransfer", my_batch.ids.size() * node2size[my_batch.ids.front()]);
+                            localTimer.cumint("n_combine", 1);
                             combine_tensors(my_batch.ids, i, *my_xsi);
-                            localTimer.stop("combine tensors");
                         }
                         my_batch.arg_nfxs[i] = my_xsi;
                     }
