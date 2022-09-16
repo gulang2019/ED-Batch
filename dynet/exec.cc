@@ -309,7 +309,7 @@ void BatchedExecutionEngine::combine_tensors(
     const std::vector<VariableIndex>& batch_ids,
     int aid,
     Tensor &tout) {
-  timer.start("EXT combine tensors");
+  localTimer.start("EXT combine tensors");
   AlignedMemoryPool *mempool = tout.device->pools[(int)DeviceMempool::FXS];
   // Determine needed memory for tout and get list of nodes corresponding to
   // specified argument.
@@ -323,10 +323,10 @@ void BatchedExecutionEngine::combine_tensors(
   tout.d = Dim({total_dsize});
 
   // allocate memory for tout
-  timer.start("EXT combined allocation");
+  localTimer.start("EXT combined allocation");
   float* dest =
       static_cast<float*>(mempool->allocate(total_dsize * sizeof(float)));
-  timer.stop("EXT combined allocation");
+  localTimer.stop("EXT combined allocation");
 
 #if HAVE_CUDA
   vector<CopyArgs> locs(batch_ids.size() * 3);
@@ -361,21 +361,21 @@ void BatchedExecutionEngine::combine_tensors(
     float** srcs = static_cast<float**>(basemem);
     float** trgs = static_cast<float**>(basemem) + TRG;
     std::size_t* lens = static_cast<std::size_t*>(basemem) + LEN;
-    timer.start("EXT idx transfer");
+    localTimer.start("EXT idx transfer");
     CUDA_CHECK(cudaMemcpyAsync(basemem,
                           &(locs)[0],
                           locs.size() * sizeof(CopyArgs),
                           cudaMemcpyHostToDevice,
                           static_cast<Device_GPU*>(tout.device)->estream->stream()));
-    timer.stop("EXT idx transfer");
-    timer.start("EXT memcpy");
+    localTimer.stop("EXT idx transfer");
+    localTimer.start("EXT memcpy");
     gpu::parallel_memcpy(batch_ids.size(), max_length, srcs, trgs, lens);
-    timer.stop("EXT memcpy");
+    localTimer.stop("EXT memcpy");
 #endif
   } else if (tout.device->type == DeviceType::CPU) {
     ; // Nothing more to do, memory was already copied.
   } else { throw std::runtime_error("Bad device type"); }
-  timer.stop("EXT combine tensors");
+  localTimer.stop("EXT combine tensors");
 }
 
 void BatchedExecutionEngine::accumulate_tensors(
@@ -498,7 +498,7 @@ void BatchedExecutionEngine::garbage_collect() {
 }
 
 void BatchedExecutionEngine::visualize(int upto, string filename, string graphname, unordered_set<pair<int, int>, hash_pair> *mem_transfer_edges){
-  if (profiling_flag == 0) return;
+  if (profiling_flag <= 1) return;
   ofstream file;
   file.open(filename);
   file << "digraph " <<  graphname << " {\n";
@@ -1215,7 +1215,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
       }
       cout << "Forward Call End" << endl;
     }
-    if (profiling_flag > 0){
+    if (profiling_flag > 1){
       vector<bool> visited(upto, false);
       for (auto& batch: batches){
         for (auto id: batch.ids) 
@@ -1396,7 +1396,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
             //   autobatch_garbage[i] = false;
             } else { // if non-contig, copy xs_i into new mem.
               // 2.b) the inputs need to be concatenated, and are not contiguous
-              if (profiling_flag > 0){
+              if (profiling_flag > 1){
                 for (auto id: my_batch.ids) {
                   mem_transfer_edges.insert({cg.nodes[id]->args[i], id});
                 } 

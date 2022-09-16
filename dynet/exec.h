@@ -114,6 +114,7 @@ class BatchedExecutionEngine : public ExecutionEngine {
   void schedule_snode_graph_rl();
   // store execution order and do memory allocation
   void memory_allocation(BatchInfo & my_batch);
+  void execute_batch(BatchInfo& batch);
   void execution(int upto);
   bool commit_batch_OoC(int tid);
   void forward_OoC(VariableIndex upto);
