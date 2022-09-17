@@ -11,6 +11,7 @@ set(dynet_library_SRCS
     exec.cc
     exec-ooc.cc
     ooc-exec.cc
+    ooc-bbmarker.cc
     expr.cc
     fast-lstm.cc
     globals.cc

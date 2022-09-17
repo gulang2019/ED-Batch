@@ -25,15 +25,15 @@ class ExecutionEngine {
   virtual void backward(bool full = false) = 0;
   virtual void backward(VariableIndex i, bool full = false) = 0;
  protected:
-  explicit ExecutionEngine(const ComputationGraph& cg);
+  explicit ExecutionEngine(ComputationGraph& cg);
   DeviceManager* const device_manager;
-  const ComputationGraph& cg;
+  ComputationGraph& cg;
   VariableIndex backward_computed;
 };
 
 class SimpleExecutionEngine : public ExecutionEngine {
  public:
-  explicit SimpleExecutionEngine(const ComputationGraph& cg) :
+  explicit SimpleExecutionEngine(ComputationGraph& cg) :
     ExecutionEngine(cg), num_nodes_evaluated(0) {}
   void invalidate() override;
   void invalidate(unsigned i) override;
@@ -72,7 +72,7 @@ public:
 
 class BatchedExecutionEngine : public ExecutionEngine {
  public:
-  explicit BatchedExecutionEngine(const ComputationGraph& cg) :
+  explicit BatchedExecutionEngine(ComputationGraph& cg) :
     ExecutionEngine(cg), num_nodes_evaluated(0), num_batches_evaluated(0) {}
   ~BatchedExecutionEngine() { garbage_collect(); }
   void invalidate() override;
@@ -94,17 +94,18 @@ class BatchedExecutionEngine : public ExecutionEngine {
   
   static int graph_id;
   static OoC::DynamicBatching db;
-  static OoC::PatternCache pattern_cache;
-  static OoC::Trie head;
-  static std::vector<OoC::typeInfo> stypes;
+  // static OoC::PatternCache pattern_cache;
+  // static OoC::Trie head;
+  // static std::vector<OoC::typeInfo> stypes;
   static OoC::Scheduler& scheduler;
   // static std::vector<OoC::typeInfo> stypes;
   // a sophisticated implementation of OoC's inference stage
   void getBatches(VariableIndex upto, VariableIndex & batch_id);
   OoC::Timer localTimer;
-  std::vector<OoC::supernodeInfo> snodes;
+  // std::vector<OoC::supernodeInfo> snodes;
+  void commit_unbatchables(VariableIndex upto);
   void construct_snode_graph_OoC(VariableIndex upto);
-  void construct_snode_graph_from_bb_OoC(VariableIndex upto);
+  // void construct_snode_graph_from_bb_OoC(VariableIndex upto);
   void schedule_snode_graph_OoC();
   
   enum {
@@ -134,13 +135,13 @@ class BatchedExecutionEngine : public ExecutionEngine {
   std::vector<VariableIndex> node2batch; // length: number of nodes
   std::vector<size_t> node2offset, node2size; // length: number of nodes
   std::vector<BatchInfo> batches; // length: number of batches
-  static SigMap sigmap;
+  SigMap sigmap;
 
   // For debug 
   std::vector<int> node2sid;
   std::vector<int> node2mem_pos;
   int mem_id; 
-  void visualize_trie();
+  // void visualize_trie();
 
 };
 

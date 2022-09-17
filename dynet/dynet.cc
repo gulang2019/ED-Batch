@@ -67,7 +67,7 @@ void Node::autobatch_reshape_concatonly(const ComputationGraph & cg,
   }
 }
 
-ComputationGraph::ComputationGraph(){
+ComputationGraph::ComputationGraph():n_stored_stypes(stypes.size()){
   if(autobatch_flag) {
     ee.reset(new BatchedExecutionEngine(*this));
   } else {
@@ -84,7 +84,7 @@ ComputationGraph::ComputationGraph(){
   graph_id = n_cumul_hgs;
 }
 
-ComputationGraph::ComputationGraph(bool batched) {
+ComputationGraph::ComputationGraph(bool batched):n_stored_stypes(stypes.size()) {
   if(batched) {
     ee.reset(new BatchedExecutionEngine(*this));
   } else {

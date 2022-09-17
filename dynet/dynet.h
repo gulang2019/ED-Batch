@@ -488,6 +488,27 @@ struct ComputationGraph {
   unsigned get_id() const { return graph_id; };
 
   bool check_bb_mark() const;
+  
+
+  static SigMap sigmap;
+  static std::vector<OoC::typeInfo> stypes;
+  struct {
+
+  };
+  static OoC::TupleDict<int> stype_dict;
+  static OoC::PatternCache pattern_cache;
+  enum mode_t {
+    TRAIN, 
+    INFERENCE
+  };
+  int n_stored_stypes;
+  int n_new_ops;
+  mode_t schedule_mode = INFERENCE;
+  int n_marked_node = 0;
+  std::vector<OoC::supernodeInfo> snodes;
+  std::vector<int> nid2sid;
+  std::list<int> unbatchable_ops;
+  void mark_basic_block();
 
   // data
   std::vector<Node*> nodes;  // **stored in topological order**

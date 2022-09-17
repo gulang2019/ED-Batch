@@ -337,6 +337,7 @@ Expression concatenate(const std::vector<Expression> &xs, unsigned d) { return d
 ////////////////////////////////////////////////
 
 void mark_basic_block(ComputationGraph *cg, const int block_id, const bool is_begin) {
+  return;
   if (autobatch_flag != 7) return;
   cg->add_function<BBMark>(block_id, is_begin);}
 

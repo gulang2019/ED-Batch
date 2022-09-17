@@ -17,7 +17,7 @@ using namespace OoC;
 
 namespace dynet {
 
-ExecutionEngine::ExecutionEngine(const ComputationGraph& cg)
+ExecutionEngine::ExecutionEngine(ComputationGraph& cg)
     : device_manager(get_device_manager()), cg(cg), backward_computed(0) {}
 
 ExecutionEngine::~ExecutionEngine() {}
@@ -295,10 +295,10 @@ static_assert(sizeof(float*) == sizeof(std::size_t),
               "Pointer size must be the same size as size_t");
 
 OoC::DynamicBatching BatchedExecutionEngine::db("train", "information_entropy");
-OoC::PatternCache BatchedExecutionEngine::pattern_cache;
-OoC::Trie BatchedExecutionEngine::head;
-vector<OoC::typeInfo> BatchedExecutionEngine::stypes;
-SigMap BatchedExecutionEngine::sigmap;
+// OoC::PatternCache BatchedExecutionEngine::pattern_cache;
+// OoC::Trie BatchedExecutionEngine::head;
+// vector<OoC::typeInfo> BatchedExecutionEngine::stypes;
+// SigMap BatchedExecutionEngine::sigmap;
 OoC::QLearningModel model;
 OoC::Scheduler& BatchedExecutionEngine::scheduler = model;
 
@@ -318,7 +318,7 @@ void BatchedExecutionEngine::combine_tensors(
   vector<VariableIndex> arg_nodes(batch_ids.size());
   for (unsigned i = 0; i < batch_ids.size(); ++i) {
     const auto nid = cg.nodes[batch_ids[i]]->args[aid];
-    total_dsize += node2size[nid];
+    total_dsize += cg.nodes[nid]->dim.size();
     arg_nodes[i] = nid;
   }
   tout.d = Dim({total_dsize});
@@ -341,7 +341,7 @@ void BatchedExecutionEngine::combine_tensors(
   tout.v = dest;
   // copy
   for (const auto id : arg_nodes) {
-    const size_t sz = node2size[id];
+    const size_t sz = cg.nodes[id]->dim.size();
 
     float* my_src = batches[node2batch[id]].nfx.v + node2offset[id];
     if (tout.device->type == DeviceType::CPU) {
@@ -442,7 +442,7 @@ void BatchedExecutionEngine::invalidate() {
   node2batch.clear();
   ndEdfs.clear();
   nfx_cache.clear();
-  snodes.clear();
+  // snodes.clear();
 }
 
 void BatchedExecutionEngine::invalidate(unsigned i) {
@@ -1407,6 +1407,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
               }
               localTimer.start("combine tensors");
               localTimer.cumint("n_memtransfer", my_batch.ids.size() * node2size[my_batch.ids.front()]);
+              localTimer.cumint("n_combine", 1);
               combine_tensors(my_batch.ids, i, *my_xsi);
               localTimer.stop("combine tensors");
             }
@@ -1664,6 +1665,11 @@ void BatchedExecutionEngine::backward(VariableIndex from_where, bool full) {
 
 const Tensor& BatchedExecutionEngine::get_nfx(VariableIndex i) {
   if(nfx_cache[i].v == nullptr) {
+    if (! (node2batch[i] < batches.size())){
+      fprintf(stderr, "[get_nfx::ERROR]: i %d, bid %d, batches.size() %d\n", 
+        i, node2batch[i], batches.size());
+      assert(false);
+    }
     const Tensor & bt = batches[node2batch[i]].nfx;
     Tensor & t = nfx_cache[i];
     t.v = bt.v + node2offset[i]; 
