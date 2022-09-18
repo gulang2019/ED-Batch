@@ -109,6 +109,8 @@ PYTHON = sys.executable
 
 # Try to find Eigen
 EIGEN3_INCLUDE_DIR = ENV.get("EIGEN3_INCLUDE_DIR")  # directory where eigen is saved
+# Try to find OoC
+OoC_INCLUDE_DIR = ENV.get("OoC_INCLUDE_DIR")
 # The cmake directory and Python directory are different in manual install, so
 # will break if relative path is specified. Try moving up if path is specified
 # but not found
@@ -167,7 +169,7 @@ else:
 
 LIBRARY_DIRS.insert(0, DYNET_LIB_DIR)
 
-INCLUDE_DIRS[:] = filter(None, [PROJECT_SOURCE_DIR, EIGEN3_INCLUDE_DIR])
+INCLUDE_DIRS[:] = filter(None, [PROJECT_SOURCE_DIR, EIGEN3_INCLUDE_DIR, OoC_INCLUDE_DIR])
 
 TARGET = [Extension(
     "_dynet",  # name of extension

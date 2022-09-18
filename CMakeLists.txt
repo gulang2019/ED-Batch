@@ -1,6 +1,7 @@
 project(dynet)
 cmake_minimum_required(VERSION 2.8 FATAL_ERROR)
 
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
 # DYNET uses Eigen which exploits modern CPU architectures. To get the
@@ -137,6 +138,7 @@ if(ENABLE_BOOST)
   set(Boost_REALPATH ON)
   find_package(Boost COMPONENTS program_options regex serialization REQUIRED)
   message("-- Boost dir is " ${Boost_INCLUDE_DIR})
+  message("-- Boost lib is " ${Boost_LIBRARIES})
   include_directories(${Boost_INCLUDE_DIR})
   if(MSVC)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /LIBPATH:${Boost_LIBRARY_DIRS}")
@@ -190,6 +192,18 @@ set(EIGEN3_INCLUDE_DIR ${EIGEN3_INCLUDE_DIR} CACHE STRING "" FORCE)
 message("-- Eigen dir is " ${EIGEN3_INCLUDE_DIR})
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
+
+# look for OoC
+message("cmake module path: ${CMAKE_MODULE_PATH}")
+find_package(OoC REQUIRED)
+if (OoC_FOUND)
+  message("--OoC dir is ${OoC_INCLUDE_DIR}")
+  include_directories(${OoC_INCLUDE_DIR})
+  set(LIBS ${LIBS} ${OoC_LIBRARY})
+else (OoC_FOUND)
+  message(FATAL_ERROR "OoC not found")
+endif (OoC_FOUND)
+
 
 FIND_PACKAGE(Threads REQUIRED)
 set(LIBS ${LIBS} ${CMAKE_THREAD_LIBS_INIT})
