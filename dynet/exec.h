@@ -87,7 +87,7 @@ class BatchedExecutionEngine : public ExecutionEngine {
   void backward(VariableIndex from_where, bool full = false) override;
   void garbage_collect();
   void visualize(int upto, std::string filename, std::string graphname, std::unordered_set<std::pair<int, int>, OoC::hash_pair> * mem_transfer_edges);
-  void visualize_snode(std::string filname, std::string graphname);
+  void visualize_snode(int upto, std::string filname, std::string graphname, std::unordered_set<std::pair<int, int>, OoC::hash_pair> *mem_transfer_edges = nullptr);
   void export_graph(VariableIndex upto, std::string filename);
   void export_snode_graph(std::string filename);
  private:
@@ -135,10 +135,11 @@ class BatchedExecutionEngine : public ExecutionEngine {
   std::vector<VariableIndex> node2batch; // length: number of nodes
   std::vector<size_t> node2offset, node2size; // length: number of nodes
   std::vector<BatchInfo> batches; // length: number of batches
+  std::vector<int> memory_affinity;
+  int memory_affinity_tag = 0;
   SigMap sigmap;
 
   // For debug 
-  std::vector<int> node2sid;
   std::vector<int> node2mem_pos;
   int mem_id; 
   // void visualize_trie();

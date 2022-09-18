@@ -501,50 +501,6 @@ void BatchedExecutionEngine::garbage_collect() {
   batches.clear();
 }
 
-void BatchedExecutionEngine::visualize(int upto, string filename, string graphname, unordered_set<pair<int, int>, hash_pair> *mem_transfer_edges){
-  if (profiling_flag <= 1) return;
-  ofstream file;
-  file.open(filename);
-  file << "digraph " <<  graphname << " {\n";
-  function<string(int)> getName = [&](int nid){
-    auto sig = cg.nodes[nid]->autobatch_sig(cg, sigmap);
-    string ret =  OoC::type2name[sigmap.sig2type(sig)] 
-    + "_" + to_string(sig) + "_" + to_string(nid) + "_" + to_string(node2batch[nid]);
-    if (autobatch_flag == 7){
-      ret += "_" + to_string(node2mem_pos[nid]) + "_" + to_string(node2sid[nid]);
-    }
-    return ret;
-  };
-  for (int j = num_nodes_evaluated; j <= upto; j++){
-    const Node * node = cg.nodes[j];
-    auto sig = node->autobatch_sig(cg, sigmap);
-    if (sig == 0) continue;
-    string node_str = getName(j);
-    for (auto arg: node->args){
-      auto sig = cg.nodes[arg]->autobatch_sig(cg, sigmap);
-      string from_str = getName(arg);
-      file << "\t" << from_str << "->" << node_str;
-      if (mem_transfer_edges && mem_transfer_edges->count({arg, j}))
-        file << "\t[color=\"red\"]";
-      file << endl;
-    }
-  }
-  for (auto & batch: batches){
-    char tmp[10];
-    sprintf(tmp, "#%2x%2x%2x", rand()&0xff, rand()&0xff, rand()&0xff);
-    for (auto id: batch.ids){
-      auto sig = cg.nodes[id]->autobatch_sig(cg, sigmap);
-      if (sig == 0) continue;
-      string node_str = getName(id);
-      file << "\t" << node_str << "\t[color=\"" << string(tmp) << "\"];\n"; 
-                
-    }
-  }
-  file << "}\n";
-  file.close();
-  return;
-}
-
 const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     VariableIndex upto, int autobatch_strategy) {
   timer.clear();

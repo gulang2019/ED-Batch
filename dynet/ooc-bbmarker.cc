@@ -9,16 +9,15 @@ namespace dynet {
     
     SigMap ComputationGraph::sigmap; // static of computation graph
     vector<typeInfo> ComputationGraph::stypes; // static of computation graph
-    TupleDict<int> ComputationGraph::stype_dict; // static of computation graph
+    Trie<ComputationGraph::BBInfo> ComputationGraph::head; // static of computation graph
     PatternCache ComputationGraph::pattern_cache; // static of computation graph
 
     void ComputationGraph::mark_basic_block(){
         if (autobatch_flag != 7) return;
         if (profiling_flag) timer.start("bbmark");
-        vector<int> node2type;
-        unordered_set<int> preds;
         int n_unbatchable = 0;
         int sid = snodes.size();
+        Trie<BBInfo>* curr = &head;
         for (int nid = n_marked_node; nid < nodes.size(); nid++){
             auto node = nodes[nid];
             int sig = node->autobatch_sig(*this, sigmap);
@@ -29,12 +28,10 @@ namespace dynet {
                 nid2sid.push_back(-1);
                 continue;
             }
-            for (auto arg: node->args){
-                int arg_sid = nid2sid[arg];
-                if (arg_sid >= 0 && arg < n_marked_node) 
-                    preds.insert(arg_sid);
+            if (curr->next.count(sig) == 0){
+                curr->next[sig] = new Trie<BBInfo>();
             }
-            node2type.push_back(sig);
+            curr = curr->next[sig];
             nid2sid.push_back(sid);
         }
         if (n_unbatchable == (nodes.size() - n_marked_node)) {
@@ -43,39 +40,53 @@ namespace dynet {
             return;
         }
         assert(n_unbatchable == 0);
-        // if (n_unbatchable){
-        //     for (int nid = n_marked_node; nid < nodes.size(); nid++){
-        //         int sig = nodes[nid]->autobatch_sig(*this, sigmap);
-        //         fprintf(stderr, "%d, %d, %s: %s\n", nid, sig, type2name[sigmap.sig2type(sig)].c_str(), nodes[nid]->as_dummy_string().c_str());
-        //     }
-        // }
-        // assert(n_unbatchable == 0);
-        
+
         snodes.push_back({});
         auto & snode = snodes.back();
-        snode.inputCnt = preds.size();
         snode.min_nid = n_marked_node;
-        for (auto pred: preds) 
-            snodes[pred].succs.push_back(sid);
 
-        if (!stype_dict.count(node2type)){
+        if (!curr->isLeaf){
+            curr->isLeaf = true;
             int stid = stypes.size();
-            stype_dict[node2type] = stid;
+            curr->data.stid = stid;
             stypes.push_back({});
+            vector<int> node2type;
             vector<vector<int> > node2args;
-            for (int nid = n_marked_node; nid < nodes.size(); nid++)
-            {
+            for (int nid = n_marked_node; nid < nodes.size(); nid++) {
                 auto node = nodes[nid];
+                int sig = node->autobatch_sig(*this, sigmap);
+                node2type.push_back(sig);
                 node2args.push_back({});
-                for (auto arg : node->args)
+                int aid = 0;
+                for (auto arg : node->args){
                     node2args.back().push_back(arg - n_marked_node);
+                    int arg_sid = nid2sid[arg];
+                    if (arg_sid >= 0 && arg < n_marked_node){
+                        curr->data.pred_pos.push_back({nid - n_marked_node, aid});
+                    }
+                    aid++;
+                }
             }
             fprintf(stdout, "add pattern %d, %ld\n", stid, node2args.size());
             stypes.back().pattern = pattern_cache.add_pattern(stid, node2args, node2type);
             assert(stypes.back().pattern);
             fprintf(stdout, "add pattern finished!\n");
         }
-        int stid = stype_dict[node2type];
+
+        unordered_set<int> preds;
+        for (auto & kv: curr->data.pred_pos){
+            int nid = nodes[n_marked_node + kv.first]->args[kv.second];
+            int arg_sid = nid2sid[nid];
+            // assert(arg_sid >= 0 && nid < n_marked_node);
+            preds.insert(nid2sid[nid]);
+        }
+
+        snode.inputCnt = preds.size();
+
+        for (auto pred: preds) 
+            snodes[pred].succs.push_back(sid);
+
+        int stid = curr->data.stid;
         snode.type = stid;
         auto & stype = stypes[stid];
         if (stid >= n_stored_stypes) {

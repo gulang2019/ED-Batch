@@ -130,11 +130,12 @@ namespace dynet
     {
         bool hasUpdate = true;
         auto &frontierType = cg.stypes[tid];
-        vector<int> snode_batch = frontierType.frontiers;
+        vector<int> snode_batch = move(frontierType.frontiers);
         assert(snode_batch.size());
-        sort(snode_batch.begin(), snode_batch.end());
+        sort(snode_batch.begin(), snode_batch.end(), [&](int sid1, int sid2){
+            return memory_affinity[sid1] < memory_affinity[sid2];
+        });
         frontierType.cnt -= snode_batch.size();
-        frontierType.frontiers.clear();
         for (auto nid : snode_batch)
         {
             auto &snode = cg.snodes[nid];
@@ -142,6 +143,7 @@ namespace dynet
             frontierType.pureNodeCnt -= (snode.dirtyInputCnt == 0);
             for (auto &succ : snode.succs)
             {
+                memory_affinity[succ] = memory_affinity_tag ++;
                 auto &succNode = cg.snodes[succ];
                 if (--succNode.inputCnt == 0)
                     cg.stypes[succNode.type].frontiers.push_back(succ);
@@ -165,7 +167,7 @@ namespace dynet
             }
             bid++;
         }
-        if (profiling_flag > 1)
+        if (profiling_flag > 2)
         {
             fprintf(stdout, "cg.snodes: ");
             for (auto snode : snode_batch)
@@ -178,7 +180,8 @@ namespace dynet
                  bid < num_batch_committed + pattern->batch_ids.size(); bid++)
             {
                 fprintf(stdout, "(");
-                for (auto id : batches[bid].ids){
+                for (auto id : batches[bid].ids)
+                {
                     fprintf(stdout, "%d, ", id);
                 }
                 fprintf(stdout, "), ");
@@ -186,7 +189,8 @@ namespace dynet
             fprintf(stdout, "\n");
         }
         // memory allocation & execution
-        for (auto bid : pattern->mem_allocation_order){
+        for (auto bid : pattern->mem_allocation_order)
+        {
             memory_allocation(batches[bid + num_batch_committed]);
         }
 
@@ -244,7 +248,7 @@ namespace dynet
                 }
             }
         }
-        if (profiling_flag > 1)
+        if (profiling_flag > 2)
             fprintf(stdout, "[getBatch] use heuristic %d times\n", useHeuristic);
     }
 
@@ -480,6 +484,8 @@ namespace dynet
         // timer.stop("EXT execution");
         string graphname = "B7_" + to_string(graph_id);
         visualize(upto, "./pics/" + graphname + ".gv", graphname, &mem_transfer_edges);
+        graphname = "S" + to_string(graph_id);
+        visualize_snode(upto, "./pics/" + graphname + ".gv", graphname, &mem_transfer_edges);
     }
 
     void BatchedExecutionEngine::forward_OoC(VariableIndex upto)
@@ -493,13 +499,15 @@ namespace dynet
         node2offset.resize(uptop1, 0);
         // node2size.resize(uptop1, 0);
         batches.resize(upto - num_nodes_evaluated + num_batches_evaluated + 1);
-
+        
+        memory_affinity.resize(cg.snodes.size(), 0);
+        for (int sid = 0; sid < memory_affinity.size(); sid++)
+            memory_affinity[sid] = sid;
         // for (int j = num_nodes_evaluated; j <= upto; j++){
         //     node2size[j] = cg.nodes[j]->dim.size();
         // }
         if (profiling_flag > 1)
         {
-            node2sid.resize(uptop1, 0);
             node2mem_pos.resize(uptop1, 0);
             mem_id = 0;
         }
@@ -513,7 +521,7 @@ namespace dynet
         else
             fprintf(stdout, "train\n");
         schedule_snode_graph_rl();
-        if (profiling_flag > 1)
+        if (profiling_flag > 2)
         {
             vector<bool> visited(uptop1, false);
             for (int bid = old_num_nodes_evaluated; bid != num_batch_committed; bid++)
@@ -528,9 +536,10 @@ namespace dynet
             }
             for (int i = old_num_nodes_evaluated; i <= upto; i++)
             {
-                if (!visited[i] || !(node2batch[i] >= 0)){
+                if (!visited[i] || !(node2batch[i] >= 0))
+                {
                     fprintf(stderr, "[OoC::error]: nid %d, bid %d, old_num_nodes_evaluated %d, upto %d, num_batch_commited %d\n",
-                        i, node2batch[i], old_num_nodes_evaluated, upto, num_batch_committed);
+                            i, node2batch[i], old_num_nodes_evaluated, upto, num_batch_committed);
                 }
                 assert(visited[i]);
                 assert(node2batch[i] >= 0);
@@ -542,7 +551,8 @@ namespace dynet
                     assert(node2batch[i] > node2batch[arg]);
                 }
             }
-            for (auto & stype: cg.stypes){
+            for (auto &stype : cg.stypes)
+            {
                 assert(stype.frontiers.size() == 0);
                 assert(stype.cnt == 0);
             }
@@ -557,58 +567,74 @@ namespace dynet
         assert(num_batch_committed == num_batches_evaluated);
         localTimer.stop("total");
         localTimer.show();
-        if (store_file.size())
-        {
+        if (store_file.size()){
             localTimer.save(store_file);
         }
-        localTimer.save("./timing");
+        // localTimer.save("./timing");
         string graphname = "S" + to_string(graph_id);
-        visualize_snode("./pics/" + graphname + ".gv", graphname);
         export_snode_graph("./graph/" + graphname + ".txt");
         graphname = "G" + to_string(graph_id);
         export_graph(upto, "./graph/" + graphname + ".txt");
-        for (auto &stype : cg.stypes)
-        {
-            assert(stype.cnt == 0 && stype.frontiers.size() == 0);
-        }
+        // for (auto &stype : cg.stypes)
+        // {
+        //     assert(stype.cnt == 0 && stype.frontiers.size() == 0);
+        // }
         graph_id++;
         return;
     }
 
-    void BatchedExecutionEngine::visualize_snode(std::string filename, std::string graphname)
+    void BatchedExecutionEngine::visualize_snode(int upto, string filename, std::string graphname, std::unordered_set<std::pair<int, int>, hash_pair> *mem_transfer_edges)
     {
         if (profiling_flag <= 1)
             return;
         ofstream file;
         file.open(filename);
         file << "digraph " << graphname << "{\n";
-        function<string(int)> getName = [&](int sid)
-        {
+        function<string(int)> getName = [&](int sid){
             return "S" + to_string(sid) + "_" + to_string(cg.snodes[sid].type) + "_" + to_string(cg.snodes[sid].bid);
         };
-        int sid = 0;
-        unordered_map<int, vector<int>> bid2color;
-        for (auto &snode : cg.snodes)
-        {
-            auto this_name = getName(sid);
-            for (auto to : snode.succs)
-                file << "\t" << this_name << "->" << getName(to) << endl;
-            if (bid2color.count(snode.bid) == 0)
-            {
-                bid2color[snode.bid] = {rand() & 0xff, rand() & 0xff, rand() & 0xff};
+        
+        unordered_map<int, string> bid2color;
+        int nid = num_nodes_evaluated;
+        file << "\tnode [style=filled]\n";
+        while(nid <= upto){
+            int sid = cg.nid2sid[nid];
+            if (sid < 0) {nid++; continue;}
+            unordered_map<int, bool> preds;
+            while (nid <= upto && cg.nid2sid[nid] == sid){
+                for (auto arg: cg.nodes[nid]->args){
+                    int that_sid = cg.nid2sid[arg];
+                    if (that_sid < 0) continue;
+                    if (preds.count(that_sid) == 0) preds[that_sid] = false;
+                    if (mem_transfer_edges && mem_transfer_edges -> count({arg, nid}) != 0){
+                        preds[that_sid] = true;
+                    }
+                }
+                nid++;
             }
-            char tmp[10];
-            sprintf(tmp, "#%2x%2x%2x", bid2color[snode.bid][0], bid2color[snode.bid][1], bid2color[snode.bid][2]);
-            file << "\t" << this_name << "\t[color=\"" << tmp << "\"]\n";
-            sid++;
+            auto this_name = getName(sid);
+            for (auto & kv: preds){
+                file << "\t" << getName(kv.first) << "->" << this_name;
+                if (kv.second) file << "\t[color=\"red\"]";
+                file << endl;
+            }
+            int bid = cg.snodes[sid].bid;
+            if (bid2color.count(bid) == 0){
+                char tmp[10];
+                sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
+                bid2color[bid] = string(tmp);
+            }
+            file << this_name << "\t[color=\""<< bid2color[bid] << "\"]" << endl;
         }
 
         file << "}\n";
     }
 
-    void BatchedExecutionEngine::commit_unbatchables(VariableIndex upto){
-        list<int> & ops = cg.unbatchable_ops;
-        while (ops.size() && ops.front() <= upto){
+    void BatchedExecutionEngine::commit_unbatchables(VariableIndex upto)
+    {
+        list<int> &ops = cg.unbatchable_ops;
+        while (ops.size() && ops.front() <= upto)
+        {
             int nid = ops.front();
             Node *node = cg.nodes[nid];
             node2batch[nid] = num_batch_committed;
@@ -624,7 +650,7 @@ namespace dynet
     void BatchedExecutionEngine::export_graph(VariableIndex upto, string filename)
     {
         // bid n_input inputs
-        if (profiling_flag <= 1)
+        if (profiling_flag <= 2)
             return;
         ofstream file;
         file.open(filename);
@@ -632,7 +658,7 @@ namespace dynet
         for (VariableIndex j = 0; j <= upto; j++)
         {
             auto node = cg.nodes[j];
-            file << j << " " << node2sid[j] << " " << node2batch[j] << " " << node->args.size();
+            file << j << " " << cg.nid2sid[j] << " " << node2batch[j] << " " << node->args.size();
             for (auto arg : node->args)
             {
                 file << " " << arg;
@@ -644,7 +670,7 @@ namespace dynet
 
     void BatchedExecutionEngine::export_snode_graph(string filename)
     {
-        if (profiling_flag <= 1)
+        if (profiling_flag <= 2)
             return;
         ofstream file;
         file.open(filename);
@@ -659,34 +685,6 @@ namespace dynet
         }
         file.close();
     }
-
-    // void BatchedExecutionEngine::visualize_trie()
-    // {
-    //     vector<int> sigs;
-    //     FILE *fp;
-    //     fp = fopen("./graph/trie.txt", "w+");
-    //     assert(fp);
-    //     function<void(Trie *)> printer = [&](Trie *node)
-    //     {
-    //         if (node->isLeaf)
-    //         {
-    //             fprintf(fp, "stid %d, bbid %d, gid %d: ", node->stid, node->bbid, node->gid);
-    //             for (auto sig : sigs)
-    //             {
-    //                 fprintf(fp, "%s%d, ", type2name[sigmap.sig2type(sig)].c_str(), sig);
-    //             }
-    //             fprintf(fp, "\n");
-    //         }
-    //         for (auto kv : node->next)
-    //         {
-    //             sigs.push_back(kv.first);
-    //             printer(kv.second);
-    //             sigs.pop_back();
-    //         }
-    //     };
-    //     printer(&head);
-    //     fclose(fp);
-    // }
 
     void BatchedExecutionEngine::schedule_snode_graph_rl()
     {
@@ -706,9 +704,80 @@ namespace dynet
             }
             if (!state.size())
                 break;
+            // fprintf(stdout, "state: ");
+            // for (auto type: state){
+            //     fprintf(stdout, "%d, ", type);
+            // }
+            // fprintf(stdout, "\n");
             int act = scheduler.get_action(state);
             commit_batch_OoC(act);
         }
+        return;
+    }
+
+    void BatchedExecutionEngine::visualize(int upto, string filename, string graphname, unordered_set<pair<int, int>, hash_pair> *mem_transfer_edges)
+    {
+        if (profiling_flag <= 1 || autobatch_flag != 7)
+            return;
+        ofstream file;
+        file.open(filename);
+        file << "digraph " << graphname << " {\n";
+        file << "\tnode [style=filled]\n";
+        function<string(int)> getName = [&](int nid)
+        {
+            auto sig = cg.nodes[nid]->autobatch_sig(cg, cg.sigmap);
+            string ret = OoC::type2name[cg.sigmap.sig2type(sig)] + "_" + to_string(sig) + "_" + to_string(nid) + "_" + to_string(node2batch[nid]);
+            if (autobatch_flag == 7)
+                ret += "_" + to_string(node2mem_pos[nid]) + "_" + to_string(cg.nid2sid[nid]);
+            return ret;
+        };
+        
+
+        for (int j = num_nodes_evaluated; j <= upto; j++)
+        {
+            const Node *node = cg.nodes[j];
+            auto sig = node->autobatch_sig(cg, cg.sigmap);
+            if (sig == 0)
+                continue;
+            string node_str = getName(j);
+            for (auto arg : node->args)
+            {
+                string from_str = getName(arg);
+                file << "\t" << from_str << "->" << node_str;
+                file << "\t[";
+                // if (cg.nid2sid[arg] != cg.nid2sid[j] && cg.nid2sid[arg] >= 0) {
+                //     file << "ltail=cluser_" << cg.nid2sid[arg] << " lhead=cluster_" << cg.nid2sid[j]; 
+                // }
+                if (mem_transfer_edges && mem_transfer_edges->count({arg, j}))
+                    file << " color=\"red\"";
+                file << "]";
+                file << endl;
+            }
+        }
+
+        int nid = num_nodes_evaluated;
+        unordered_map<int, string> bid2color;
+        while(nid <= upto){
+            int sid = cg.nid2sid[nid];
+            int bid = cg.snodes[sid].bid;
+            if (sid == -1) {
+                nid ++;
+                continue;
+            }
+            if (bid2color.count(bid) == 0){
+                char tmp[10];
+                sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
+                bid2color[bid] = string(tmp);
+            }
+            while (nid <= upto && cg.nid2sid[nid] == sid){
+                file << "\t" <<  getName(nid) << "\t[color=\"" << bid2color[bid] << "\"];\n";
+                nid++;
+            }
+            
+        }
+        
+        file << "}\n";
+        file.close();
         return;
     }
 

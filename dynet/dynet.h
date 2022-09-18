@@ -492,10 +492,11 @@ struct ComputationGraph {
 
   static SigMap sigmap;
   static std::vector<OoC::typeInfo> stypes;
-  struct {
-
+  struct BBInfo{
+    int stid;
+    std::vector<std::pair<int, int> > pred_pos;
   };
-  static OoC::TupleDict<int> stype_dict;
+  static OoC::Trie<BBInfo> head;
   static OoC::PatternCache pattern_cache;
   enum mode_t {
     TRAIN, 
