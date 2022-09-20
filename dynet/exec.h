@@ -131,6 +131,8 @@ class BatchedExecutionEngine : public ExecutionEngine {
   std::vector<Tensor> nfx_cache;
   std::vector<Tensor> ndEdfs;
   VariableIndex num_nodes_evaluated, num_batches_evaluated, num_batch_committed;
+  // data structure for reversed scheduling
+  std::vector<int> start_indices;
   // Information about the batched computation graph
   std::vector<VariableIndex> node2batch; // length: number of nodes
   std::vector<size_t> node2offset, node2size; // length: number of nodes
@@ -141,6 +143,8 @@ class BatchedExecutionEngine : public ExecutionEngine {
 
   // For debug 
   std::vector<int> node2mem_pos;
+  // the lower bound on batch numbers;
+  int lower_bound();
   int mem_id; 
   // void visualize_trie();
 

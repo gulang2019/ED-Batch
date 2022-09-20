@@ -70,21 +70,32 @@ namespace dynet {
             fprintf(stdout, "add pattern %d, %ld\n", stid, node2args.size());
             stypes.back().pattern = pattern_cache.add_pattern(stid, node2args, node2type);
             assert(stypes.back().pattern);
+            if (profiling_flag > -1) {
+                fprintf(stdout, "pattern: ");
+                for (int nid = n_marked_node; nid < nodes.size(); nid++) {
+                    fprintf(stdout, "%s, ", type2name[sigmap.sig2type(node2type[nid - n_marked_node])].c_str());
+                }
+                fprintf(stdout, "\n");
+            }
             fprintf(stdout, "add pattern finished!\n");
         }
 
-        unordered_set<int> preds;
+        // unordered_set<int> preds;
         for (auto & kv: curr->data.pred_pos){
             int nid = nodes[n_marked_node + kv.first]->args[kv.second];
             int arg_sid = nid2sid[nid];
-            // assert(arg_sid >= 0 && nid < n_marked_node);
-            preds.insert(nid2sid[nid]);
+            if (!(arg_sid >= 0 && nid < n_marked_node)){
+                fprintf(stderr, "this_nid %d, nid %d, arg_sid %d, n_marked_node %d, pattern: ", n_marked_node + kv.first, nid, arg_sid, n_marked_node);
+                for (int nid = n_marked_node; nid < nodes.size(); nid++) {
+                    fprintf(stderr, "%s, ", type2name[sigmap.sig2type(nodes[nid]->autobatch_sig(*this, sigmap))].c_str());
+                }
+                fprintf(stdout, "\n");
+                assert(false);
+            }
+            snodes[arg_sid].inputCnt++;
+            snode.succs.push_back(arg_sid);
+            // preds.insert(nid2sid[nid]);
         }
-
-        snode.inputCnt = preds.size();
-
-        for (auto pred: preds) 
-            snodes[pred].succs.push_back(sid);
 
         int stid = curr->data.stid;
         snode.type = stid;
@@ -94,11 +105,62 @@ namespace dynet {
             if (n_new_ops > 1)
                 schedule_mode = TRAIN; 
         }
-        if (!preds.size()) stype.frontiers.push_back(sid);
+        // if (!preds.size()) stype.frontiers.push_back(sid);
         stype.cnt++;
 
         n_marked_node = nodes.size();
         if (profiling_flag) timer.stop("bbmark");
+    }
+
+    void ComputationGraph::mark_sum(){
+        assert(n_marked_node == nodes.size() - 1);
+        auto node = nodes[n_marked_node];
+        int sig = node->autobatch_sig(*this, sigmap);
+        assert(sigmap.sig2type(sig) == op_type::sum);
+        int sid = snodes.size();
+        snodes.push_back({});
+        nid2sid.push_back(sid);
+        auto & snode = snodes.back();
+        snode.min_nid = n_marked_node;
+        Trie<BBInfo>* curr = &head;
+        if (curr->next.count(sig) == 0) {
+            curr->next[sig] = new Trie<BBInfo>();
+        }
+        curr = curr->next[sig];
+        if (!curr->isLeaf){
+            curr->isLeaf = true;   
+            int stid = stypes.size();
+            curr->data.stid = stid;
+            stypes.push_back({});
+            stypes.back().pattern = pattern_cache.add_pattern(stid, {{}}, {sig});
+            fprintf(stdout, "add pattern: sum %d, \n", stypes.back().pattern->nop);
+            stypes.back().pattern->show();
+        }
+        int stid = curr->data.stid;
+        snode.type = stid;
+        stypes[stid].cnt++;
+        for (auto arg: node->args){
+            int arg_sid = nid2sid[arg];
+            assert(arg_sid>= 0);
+            snodes[arg_sid].inputCnt ++;
+            snode.succs.push_back(arg_sid); 
+        }
+        n_marked_node = nodes.size();
+    }
+
+    void ComputationGraph::export_snode_graph(string filename){
+        ofstream file;
+        file.open(filename);
+        file << snodes.size() << endl;
+        int sid = 0;
+        for (auto &snode : snodes)
+        {
+            file << snode.type << " " << snode.succs.size() << " ";
+            for (auto succ : snode.succs)
+                file << succ << " ";
+            file << endl;
+        }
+        file.close();
     }
 
 } // namespace dynet

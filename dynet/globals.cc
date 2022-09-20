@@ -14,6 +14,7 @@ float default_weight_decay_lambda;
 int autobatch_flag; 
 int profiling_flag = 0;
 NamedTimer timer;
+OoC::Timer global_timer;
 std::string store_file;
 
 }

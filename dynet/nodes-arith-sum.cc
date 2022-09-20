@@ -34,20 +34,20 @@ Dim Sum::dim_forward(const vector<Dim>& xs) const {
 
 int Sum::autobatch_sig(const ComputationGraph &cg, SigMap &sm) const {
   Sig s(nt::sum);
-  s.add_node(args.size());
-  // Two cases:
-  // If unbatched, it's just an elementwise addition
-  // TODO: This will be more efficient if we identify arguments that are used
-  //       multiple times (e.g. bias vectors)
-  if(dim.bd == 1) {
-    s.add_int(-2);
-  // Otherwise, make sure the dimensions match and that batched nodes don't intersect
-  } else {
-    s.add_dim(dim);
-    for(auto ai : args) {
-      s.add_int(cg.nodes[ai]->dim.bd == 1 ? ai : -1);
-    }
-  }
+  // s.add_node(args.size());
+  // // Two cases:
+  // // If unbatched, it's just an elementwise addition
+  // // TODO: This will be more efficient if we identify arguments that are used
+  // //       multiple times (e.g. bias vectors)
+  // if(dim.bd == 1) {
+  //   s.add_int(-2);
+  // // Otherwise, make sure the dimensions match and that batched nodes don't intersect
+  // } else {
+  //   s.add_dim(dim);
+  //   for(auto ai : args) {
+  //     s.add_int(cg.nodes[ai]->dim.bd == 1 ? ai : -1);
+  //   }
+  // }
   return sm.get_idx(s);
 }
 

@@ -309,8 +309,8 @@ void BatchedExecutionEngine::combine_tensors(
     const std::vector<VariableIndex>& batch_ids,
     int aid,
     Tensor &tout) {
-  localTimer.start("EXT combine tensors");
-  localTimer.start("EXT combine preparation");
+  global_timer.start("EXT combine tensors");
+  global_timer.start("EXT combine preparation");
   AlignedMemoryPool *mempool = tout.device->pools[(int)DeviceMempool::FXS];
   // Determine needed memory for tout and get list of nodes corresponding to
   // specified argument.
@@ -322,14 +322,14 @@ void BatchedExecutionEngine::combine_tensors(
     arg_nodes[i] = nid;
   }
   tout.d = Dim({total_dsize});
-  localTimer.stop("EXT combine preparation");
+  global_timer.stop("EXT combine preparation");
 
   // allocate memory for tout
-  localTimer.start("EXT combined allocation");
+  global_timer.start("EXT combined allocation");
   float* dest =
       static_cast<float*>(mempool->allocate(total_dsize * sizeof(float)));
-  localTimer.stop("EXT combined allocation");
-  localTimer.start("EXT prepare args");
+  global_timer.stop("EXT combined allocation");
+  global_timer.start("EXT prepare args");
 
 #if HAVE_CUDA
   vector<CopyArgs> locs(batch_ids.size() * 3);
@@ -357,10 +357,10 @@ void BatchedExecutionEngine::combine_tensors(
     } else { throw std::runtime_error("Bad device type"); }
     dest += sz; // pointer arith
   }
-  localTimer.stop("EXT prepare args");
+  global_timer.stop("EXT prepare args");
   if (tout.device->type == DeviceType::GPU) {
 #if HAVE_CUDA
-    localTimer.start("EXT idx transfer");
+    global_timer.start("EXT idx transfer");
     size_t req_sz = batch_ids.size() * 3 * sizeof(CopyArgs);
     void* basemem = mempool->allocate(req_sz);
     float** srcs = static_cast<float**>(basemem);
@@ -371,15 +371,15 @@ void BatchedExecutionEngine::combine_tensors(
                           locs.size() * sizeof(CopyArgs),
                           cudaMemcpyHostToDevice,
                           static_cast<Device_GPU*>(tout.device)->estream->stream()));
-    localTimer.stop("EXT idx transfer");
-    localTimer.start("EXT memcpy");
+    global_timer.stop("EXT idx transfer");
+    global_timer.start("EXT memcpy");
     gpu::parallel_memcpy(batch_ids.size(), max_length, srcs, trgs, lens);
-    localTimer.stop("EXT memcpy");
+    global_timer.stop("EXT memcpy");
 #endif
   } else if (tout.device->type == DeviceType::CPU) {
     ; // Nothing more to do, memory was already copied.
   } else { throw std::runtime_error("Bad device type"); }
-  localTimer.stop("EXT combine tensors");
+  global_timer.stop("EXT combine tensors");
 }
 
 void BatchedExecutionEngine::accumulate_tensors(
@@ -504,6 +504,9 @@ void BatchedExecutionEngine::garbage_collect() {
 const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     VariableIndex upto, int autobatch_strategy) {
   timer.clear();
+  if (profiling_flag > 1){
+    fprintf(stdout, "[dynet::autobatch]: lower_bound %d batches\n", lower_bound());
+  }
   // cerr << "running graph" << endl; cg.print_graphviz();
 
   if (upto >= num_nodes_evaluated) {
@@ -512,8 +515,8 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
       return get_nfx(upto);
     }
 
-    OoC::Timer localTimer;
-    localTimer.start("total");
+    // OoC::Timer localTimer;
+    global_timer.start("total");
     if (autobatch_strategy == 0) autobatch_strategy = 1;
     string current_batch_name;
 
@@ -549,11 +552,11 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
 
     // More intelligent batching?
     // timer.start("EXT scheduling");
-    localTimer.start("scheduling");
+    global_timer.start("scheduling");
     if (autobatch_strategy == 6 && db.mode == DynamicBatching::INFERENCE){
-      localTimer.start("intergrated inference");
+      global_timer.start("intergrated inference");
       getBatches(upto, batch_id);
-      localTimer.stop("intergrated inference");
+      global_timer.stop("intergrated inference");
     }
     else if (autobatch_strategy >= 5){
       // timer.start("EXT scheduling preparation");
@@ -1159,11 +1162,11 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
       }
     }
     // timer.stop("EXT scheduling");
-    localTimer.stop("scheduling");
+    global_timer.stop("scheduling");
     // 2.5 print some debug info
     cerr << "Forward Call Batch_strategy " << autobatch_strategy  << " : " << batch_id << " kernels."  << endl;
     timer.cumint("n_kernels", batch_id);
-    localTimer.cumint("n_kernels", batch_id);
+    global_timer.cumint("n_kernels", batch_id);
 
     if (profiling_flag > 1) {
       cout << "Forward Call batch_strategy " << autobatch_strategy  << " : " << batch_id << " kernels."  << endl;
@@ -1193,7 +1196,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
 
     // 3. Based on the batches, allocate the memory, etc
     // timer.start("EXT memory allocation");
-    localTimer.start("memory allocation");
+    global_timer.start("memory allocation");
     for(VariableIndex bid = num_batches_evaluated; bid < batch_id; ++bid) {
       auto & my_batch = batches[bid];
       auto & nfx = my_batch.nfx;
@@ -1279,10 +1282,10 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
       }  // batch_ids.size() > 1 condition
     }  // loop over all batches
     // timer.stop("EXT memory allocation");
-    localTimer.stop("memory allocation");
+    global_timer.stop("memory allocation");
     // 4: do the actual execution
     // timer.start("EXT execution");
-    localTimer.start("execution");
+    global_timer.start("execution");
     Tensor temp_nfx;
     vector<const Tensor*> xs(16), ts(16);
     unordered_set<pair<int, int>, hash_pair> mem_transfer_edges;
@@ -1305,10 +1308,10 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
           ++ai;
         }
         // timer.start("EXT computation");
-        localTimer.start("computation");
+        global_timer.start("computation");
         node->forward(xs, my_batch.nfx);
         // timer.stop("EXT computation");
-        localTimer.stop("computation");
+        global_timer.stop("computation");
         ++num_batches_evaluated;
       } else { // execute a batch node
         size_t arity = my_batch.concat.size();
@@ -1318,7 +1321,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
         // Figure out whether we need to create the inputs
         my_batch.arg_nfxs.resize(arity);
         // timer.start("EXT memtransfer");
-        localTimer.start("memtransfer");
+        global_timer.start("memtransfer");
         for(size_t i = 0; i < arity; ++i) {
           // 1) the inputs don't need to be concatenated. Just use the tensor
           if(!my_batch.concat[i]) {
@@ -1333,7 +1336,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
             my_xsi->mem_pool = DeviceMempool::FXS;
 
             // check contig memory
-            localTimer.start("check contig");
+            global_timer.start("check contig");
             auto it = my_batch.ids.begin();
             auto itend = my_batch.ids.end();
             VariableIndex aid = cg.nodes[*(it++)]->args[i];
@@ -1347,7 +1350,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
               contig = contig && v == min_node + tot_arg;
               tot_arg += node2size[aid];
             }
-            localTimer.stop("check contig");
+            global_timer.stop("check contig");
             if (contig) { // if contig, use current mem for xs_i
               //xs[i] = &batched_nfxs[...];
               my_xsi->v = min_node;
@@ -1361,25 +1364,25 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
                   mem_transfer_edges.insert({cg.nodes[id]->args[i], id});
                 } 
               }
-              localTimer.start("combine tensors");
-              localTimer.cumint("n_memtransfer", my_batch.ids.size() * node2size[my_batch.ids.front()]);
-              localTimer.cumint("n_combine", 1);
+              global_timer.start("combine tensors");
+              global_timer.cumint("n_memtransfer", my_batch.ids.size() * node2size[my_batch.ids.front()]);
+              global_timer.cumint("n_combine", 1);
               combine_tensors(my_batch.ids, i, *my_xsi);
-              localTimer.stop("combine tensors");
+              global_timer.stop("combine tensors");
             }
             my_batch.arg_nfxs[i] = my_xsi;
           }
         }
         // timer.stop("EXT memtransfer");
-        localTimer.stop("memtransfer");
+        global_timer.stop("memtransfer");
         // timer.start("EXT mem reshape");
         node->autobatch_reshape(cg, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
         // timer.stop("EXT mem reshape");
         // timer.start("EXT computation");
-        localTimer.start("computation");
+        global_timer.start("computation");
         node->forward(my_batch.arg_nfxs, my_batch.nfx);
         // timer.stop("EXT computation");
-        localTimer.stop("computation");
+        global_timer.stop("computation");
         // cerr << "batched forward[" << num_batches_evaluated << "] (nodes:"; for(auto id : my_batch.ids) cerr << ' ' << id; cerr << ") == " << print_vec(as_vector(my_batch.nfx)) << endl;
         ++num_batches_evaluated;
       } // execute a batch node (not a single instance node)
@@ -1387,12 +1390,9 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     }
     // timer.stop("EXT execution");
     
-    localTimer.stop("execution");
-    localTimer.stop("total");
-    localTimer.show();
-    if (store_file.size()){
-      localTimer.save(store_file);
-    }
+    global_timer.stop("execution");
+    global_timer.stop("total");
+    global_timer.show();
     string graphname = "B" + to_string(autobatch_strategy) + "_" + to_string(graph_id++);
     visualize(upto, "./pics/" + graphname + ".gv", graphname, &mem_transfer_edges);
     free(node2profid);

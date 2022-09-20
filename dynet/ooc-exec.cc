@@ -24,7 +24,7 @@ namespace dynet
 
     void BatchedExecutionEngine::memory_allocation(BatchInfo &my_batch)
     {
-        localTimer.start("memory allocation");
+        global_timer.start("memory allocation");
         auto &batch_ids = my_batch.ids;
         auto &nfx = my_batch.nfx;
         assert(batch_ids.size());
@@ -123,32 +123,40 @@ namespace dynet
             nfx.d = Dim({(unsigned int)tot_main});
             nfx.v = head_main;
         } // batch_ids.size() > 1 condition
-        localTimer.stop("memory allocation");
+        global_timer.stop("memory allocation");
     }
 
     bool BatchedExecutionEngine::commit_batch_OoC(int tid)
     {
+        start_indices.push_back(num_batch_committed);
+
         bool hasUpdate = true;
         auto &frontierType = cg.stypes[tid];
         vector<int> snode_batch = move(frontierType.frontiers);
         assert(snode_batch.size());
-        sort(snode_batch.begin(), snode_batch.end(), [&](int sid1, int sid2){
-            return memory_affinity[sid1] < memory_affinity[sid2];
-        });
-        frontierType.cnt -= snode_batch.size();
+        sort(snode_batch.begin(), snode_batch.end(), [&](int sid1, int sid2)
+             { return memory_affinity[sid1] < memory_affinity[sid2]; });
+        int batch_size = snode_batch.size();
+        // frontierType.cnt -= batch_size;
+
         for (auto nid : snode_batch)
         {
             auto &snode = cg.snodes[nid];
             snode.bid = num_batch_committed;
             frontierType.pureNodeCnt -= (snode.dirtyInputCnt == 0);
+            int aid = 0;
             for (auto &succ : snode.succs)
             {
-                memory_affinity[succ] = memory_affinity_tag ++;
+                memory_affinity[succ] = memory_affinity_tag + aid * batch_size;
                 auto &succNode = cg.snodes[succ];
                 if (--succNode.inputCnt == 0)
                     cg.stypes[succNode.type].frontiers.push_back(succ);
+                aid++;
             }
+            memory_affinity_tag++;
         }
+        memory_affinity_tag += batch_size * (cg.snodes[snode_batch.front()].succs.size() - 1);
+
         Pattern *pattern = frontierType.pattern;
         // execution allocation;
         int bid = num_batch_committed;
@@ -190,9 +198,7 @@ namespace dynet
         }
         // memory allocation & execution
         for (auto bid : pattern->mem_allocation_order)
-        {
             memory_allocation(batches[bid + num_batch_committed]);
-        }
 
         // for (int bid = num_batch_committed; bid < num_batch_committed + pattern->n_batch; bid++){
         //     execute_batch(batches[bid]);
@@ -254,7 +260,7 @@ namespace dynet
 
     void BatchedExecutionEngine::execute_batch(BatchInfo &my_batch)
     {
-        localTimer.start("execution");
+        global_timer.start("execution");
         string current_batch_name;
         Tensor temp_nfx;
         vector<const Tensor *> xs(16), ts(16);
@@ -277,10 +283,10 @@ namespace dynet
                 ++ai;
             }
             // timer.start("EXT computation");
-            localTimer.start("computation");
+            global_timer.start("computation");
             node->forward(xs, my_batch.nfx);
             // timer.stop("EXT computation");
-            localTimer.stop("computation");
+            global_timer.stop("computation");
             ++num_batches_evaluated;
         }
         else
@@ -293,7 +299,7 @@ namespace dynet
             // Figure out whether we need to create the inputs
             my_batch.arg_nfxs.resize(arity);
             // timer.start("EXT memtransfer");
-            localTimer.start("memtransfer");
+            global_timer.start("memtransfer");
             for (size_t i = 0; i < arity; ++i)
             {
                 // 1) the inputs don't need to be concatenated. Just use the tensor
@@ -310,7 +316,7 @@ namespace dynet
                     Tensor *my_xsi = new Tensor;
                     my_xsi->device = node->device;
                     my_xsi->mem_pool = DeviceMempool::FXS;
-                    localTimer.start("check contig");
+                    global_timer.start("check contig");
 
                     // check contig memory
                     auto it = my_batch.ids.begin();
@@ -329,7 +335,7 @@ namespace dynet
                         // assert(node2size[aid] == cg.nodes[aid]->dim.size());
                         tot_arg += cg.nodes[aid]->dim.size();
                     }
-                    localTimer.stop("check contig");
+                    global_timer.stop("check contig");
                     if (contig)
                     { // if contig, use current mem for xs_i
                         // xs[i] = &batched_nfxs[...];
@@ -341,23 +347,23 @@ namespace dynet
                     else
                     { // if non-contig, copy xs_i into new mem.
                         // 2.b) the inputs need to be concatenated, and are not contiguous
-                        localTimer.cumint("n_memtransfer", my_batch.ids.size() * cg.nodes[my_batch.ids.front()]->dim.size());
-                        localTimer.cumint("n_combine", 1);
+                        global_timer.cumint("n_memtransfer", my_batch.ids.size() * cg.nodes[my_batch.ids.front()]->dim.size());
+                        global_timer.cumint("n_combine", 1);
                         combine_tensors(my_batch.ids, i, *my_xsi);
                     }
                     my_batch.arg_nfxs[i] = my_xsi;
                 }
             }
-            localTimer.stop("memtransfer");
+            global_timer.stop("memtransfer");
             node->autobatch_reshape(cg, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
-            localTimer.start("computation");
+            global_timer.start("computation");
             node->forward(my_batch.arg_nfxs, my_batch.nfx);
-            localTimer.stop("computation");
+            global_timer.stop("computation");
             ++num_batches_evaluated;
         } // execute a batch node (not a single instance node)
         if (profiling_flag)
             timer.stop(current_batch_name);
-        localTimer.stop("execution");
+        global_timer.stop("execution");
     }
 
     void BatchedExecutionEngine::execution(int upto)
@@ -366,122 +372,126 @@ namespace dynet
         Tensor temp_nfx;
         vector<const Tensor *> xs(16), ts(16);
         unordered_set<pair<int, int>, hash_pair> mem_transfer_edges;
-        while (num_batches_evaluated < num_batch_committed)
-        {
-            // Read in the stuff for this batch
-            auto &my_batch = batches[num_batches_evaluated];
-            if (profiling_flag)
-            {
-                VariableIndex nid = my_batch.ids[0];
-                Node *node = cg.nodes[nid];
-                current_batch_name = "FWD " + node->as_dummy_string();
-                timer.start(current_batch_name);
-            }
-            if (my_batch.ids.size() == 1)
-            { // execute a single node
-                VariableIndex nid = my_batch.ids[0];
-                Node *node = cg.nodes[nid];
-                xs.resize(node->arity());
-                unsigned ai = 0;
-                for (VariableIndex arg : node->args)
-                {
-                    xs[ai] = &get_nfx(arg);
-                    ++ai;
-                }
-                // timer.start("EXT computation");
-                localTimer.start("computation");
-                node->forward(xs, my_batch.nfx);
-                // timer.stop("EXT computation");
-                localTimer.stop("computation");
-                ++num_batches_evaluated;
-            }
-            else
-            { // execute a batch node
-                size_t arity = my_batch.concat.size();
-                Node *node = my_batch.pseudo_node;
-                if (node == nullptr)
-                    node = cg.nodes[my_batch.ids[0]];
-                xs.resize(arity);
-                // Figure out whether we need to create the inputs
-                my_batch.arg_nfxs.resize(arity);
-                // timer.start("EXT memtransfer");
-                localTimer.start("memtransfer");
-                for (size_t i = 0; i < arity; ++i)
-                {
-                    // 1) the inputs don't need to be concatenated. Just use the tensor
-                    if (!my_batch.concat[i])
-                    {
-                        my_batch.arg_nfxs[i] = &get_nfx(node->args[i]);
-                        // 2) the inputs need to be concatenated
-                    }
-                    else
-                    {
-                        // 2.a) the inputs need to be concatenated, but are already in the
-                        // right order within a contiguous block of memory.
-                        // TODO: make this work completely
-                        Tensor *my_xsi = new Tensor;
-                        my_xsi->device = node->device;
-                        my_xsi->mem_pool = DeviceMempool::FXS;
 
-                        // check contig memory
-                        localTimer.start("check contig");
-                        auto it = my_batch.ids.begin();
-                        auto itend = my_batch.ids.end();
-                        VariableIndex aid = cg.nodes[*(it++)]->args[i];
-                        float *min_node =
-                            batches[node2batch[aid]].nfx.v + node2offset[aid];
-                        // assert(node2size[aid] == cg.nodes[aid]->dim.size());
-                        unsigned int tot_arg = cg.nodes[aid]->dim.size();
-                        bool contig = true;
-                        while (it != itend && contig)
+        for (int si = start_indices.size() - 1; si > 0; --si)
+        {
+            for (int bid = start_indices[si - 1]; bid < start_indices[si]; ++bid)
+            {
+                // Read in the stuff for this batch
+                auto &my_batch = batches[bid];
+                if (profiling_flag)
+                {
+                    VariableIndex nid = my_batch.ids[0];
+                    Node *node = cg.nodes[nid];
+                    current_batch_name = "FWD " + node->as_dummy_string();
+                    timer.start(current_batch_name);
+                }
+                if (my_batch.ids.size() == 1)
+                { // execute a single node
+                    VariableIndex nid = my_batch.ids[0];
+                    Node *node = cg.nodes[nid];
+                    xs.resize(node->arity());
+                    unsigned ai = 0;
+                    for (VariableIndex arg : node->args)
+                    {
+                        xs[ai] = &get_nfx(arg);
+                        ++ai;
+                    }
+                    // timer.start("EXT computation");
+                    global_timer.start("computation");
+                    node->forward(xs, my_batch.nfx);
+                    // timer.stop("EXT computation");
+                    global_timer.stop("computation");
+                }
+                else
+                { // execute a batch node
+                    size_t arity = my_batch.concat.size();
+                    Node *node = my_batch.pseudo_node;
+                    if (node == nullptr)
+                        node = cg.nodes[my_batch.ids[0]];
+                    xs.resize(arity);
+                    // Figure out whether we need to create the inputs
+                    my_batch.arg_nfxs.resize(arity);
+                    // timer.start("EXT memtransfer");
+                    global_timer.start("memtransfer");
+                    for (size_t i = 0; i < arity; ++i)
+                    {
+                        // 1) the inputs don't need to be concatenated. Just use the tensor
+                        if (!my_batch.concat[i])
                         {
-                            aid = cg.nodes[*(it++)]->args[i];
-                            float *v = batches[node2batch[aid]].nfx.v + node2offset[aid];
-                            contig = contig && v == min_node + tot_arg;
-                            // assert(node2size[aid] == cg.nodes[aid]->dim.size());
-                            tot_arg += cg.nodes[aid]->dim.size();
-                        }
-                        localTimer.stop("check contig");
-                        if (contig)
-                        { // if contig, use current mem for xs_i
-                            // xs[i] = &batched_nfxs[...];
-                            my_xsi->v = min_node;
-                            my_xsi->d = Dim({tot_arg});
-                            my_batch.concat[i] = 2;
-                            //   autobatch_garbage[i] = false;
+                            my_batch.arg_nfxs[i] = &get_nfx(node->args[i]);
+                            // 2) the inputs need to be concatenated
                         }
                         else
-                        { // if non-contig, copy xs_i into new mem.
-                            // 2.b) the inputs need to be concatenated, and are not contiguous
-                            if (profiling_flag > 1)
+                        {
+                            // 2.a) the inputs need to be concatenated, but are already in the
+                            // right order within a contiguous block of memory.
+                            // TODO: make this work completely
+                            Tensor *my_xsi = new Tensor;
+                            my_xsi->device = node->device;
+                            my_xsi->mem_pool = DeviceMempool::FXS;
+
+                            // check contig memory
+                            global_timer.start("check contig");
+                            auto it = my_batch.ids.begin();
+                            auto itend = my_batch.ids.end();
+                            VariableIndex aid = cg.nodes[*(it++)]->args[i];
+                            float *min_node =
+                                batches[node2batch[aid]].nfx.v + node2offset[aid];
+                            // assert(node2size[aid] == cg.nodes[aid]->dim.size());
+                            unsigned int tot_arg = cg.nodes[aid]->dim.size();
+                            bool contig = true;
+                            while (it != itend && contig)
                             {
-                                for (auto id : my_batch.ids)
-                                    mem_transfer_edges.insert({cg.nodes[id]->args[i], id});
+                                aid = cg.nodes[*(it++)]->args[i];
+                                float *v = batches[node2batch[aid]].nfx.v + node2offset[aid];
+                                contig = contig && v == min_node + tot_arg;
+                                // assert(node2size[aid] == cg.nodes[aid]->dim.size());
+                                tot_arg += cg.nodes[aid]->dim.size();
                             }
-                            localTimer.cumint("n_memtransfer", my_batch.ids.size() * cg.nodes[my_batch.ids.front()]->dim.size());
-                            localTimer.cumint("n_combine", 1);
-                            combine_tensors(my_batch.ids, i, *my_xsi);
+                            global_timer.stop("check contig");
+                            if (contig)
+                            { // if contig, use current mem for xs_i
+                                // xs[i] = &batched_nfxs[...];
+                                my_xsi->v = min_node;
+                                my_xsi->d = Dim({tot_arg});
+                                my_batch.concat[i] = 2;
+                                //   autobatch_garbage[i] = false;
+                            }
+                            else
+                            { // if non-contig, copy xs_i into new mem.
+                                // 2.b) the inputs need to be concatenated, and are not contiguous
+                                if (profiling_flag > 1)
+                                {
+                                    for (auto id : my_batch.ids)
+                                        mem_transfer_edges.insert({cg.nodes[id]->args[i], id});
+                                }
+                                global_timer.cumint("n_memtransfer", my_batch.ids.size() * cg.nodes[my_batch.ids.front()]->dim.size());
+                                global_timer.cumint("n_combine", 1);
+                                combine_tensors(my_batch.ids, i, *my_xsi);
+                            }
+                            my_batch.arg_nfxs[i] = my_xsi;
                         }
-                        my_batch.arg_nfxs[i] = my_xsi;
                     }
-                }
-                // timer.stop("EXT memtransfer");
-                localTimer.stop("memtransfer");
-                // timer.start("EXT mem reshape");
-                node->autobatch_reshape(cg, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
-                // timer.stop("EXT mem reshape");
-                // timer.start("EXT computation");
-                localTimer.start("computation");
-                node->forward(my_batch.arg_nfxs, my_batch.nfx);
-                // timer.stop("EXT computation");
-                localTimer.stop("computation");
-                // cerr << "batched forward[" << num_batches_evaluated << "] (nodes:"; for(auto id : my_batch.ids) cerr << ' ' << id; cerr << ") == " << print_vec(as_vector(my_batch.nfx)) << endl;
+                    // timer.stop("EXT memtransfer");
+                    global_timer.stop("memtransfer");
+                    // timer.start("EXT mem reshape");
+                    node->autobatch_reshape(cg, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
+                    // timer.stop("EXT mem reshape");
+                    // timer.start("EXT computation");
+                    global_timer.start("computation");
+                    node->forward(my_batch.arg_nfxs, my_batch.nfx);
+                    // timer.stop("EXT computation");
+                    global_timer.stop("computation");
+                    // cerr << "batched forward[" << num_batches_evaluated << "] (nodes:"; for(auto id : my_batch.ids) cerr << ' ' << id; cerr << ") == " << print_vec(as_vector(my_batch.nfx)) << endl;
+                } // execute a batch node (not a single instance node)
                 ++num_batches_evaluated;
-            } // execute a batch node (not a single instance node)
-            if (profiling_flag)
-                timer.stop(current_batch_name);
+                if (profiling_flag)
+                    timer.stop(current_batch_name);
+            }
         }
         // timer.stop("EXT execution");
+        assert(num_batches_evaluated == num_batch_committed);
         string graphname = "B7_" + to_string(graph_id);
         visualize(upto, "./pics/" + graphname + ".gv", graphname, &mem_transfer_edges);
         graphname = "S" + to_string(graph_id);
@@ -490,8 +500,17 @@ namespace dynet
 
     void BatchedExecutionEngine::forward_OoC(VariableIndex upto)
     {
-        localTimer.clear();
-        localTimer.start("total");
+        if (profiling_flag > 1){
+            int sum_cnt = 0;
+            for (int j = num_nodes_evaluated; j <= upto; ++j){
+                int type = cg.sigmap.sig2type(cg.nodes[j]->autobatch_sig(cg, cg.sigmap));
+                if (type == op_type::sum) 
+                    sum_cnt++;
+            }
+            fprintf(stdout, "sum: %d\n", sum_cnt);
+        }
+        // global_timer.clear();
+        global_timer.start("total");
         num_batch_committed = num_batches_evaluated;
         const size_t uptop1 = upto + 1;
         nfx_cache.resize(uptop1);
@@ -499,13 +518,22 @@ namespace dynet
         node2offset.resize(uptop1, 0);
         // node2size.resize(uptop1, 0);
         batches.resize(upto - num_nodes_evaluated + num_batches_evaluated + 1);
-        
-        memory_affinity.resize(cg.snodes.size(), 0);
-        for (int sid = 0; sid < memory_affinity.size(); sid++)
-            memory_affinity[sid] = sid;
-        // for (int j = num_nodes_evaluated; j <= upto; j++){
-        //     node2size[j] = cg.nodes[j]->dim.size();
+
+        cg.stypes[cg.snodes[cg.nid2sid[upto]].type].frontiers.push_back(cg.nid2sid[upto]);
+        // int sid = 0;
+        // int frontier_type_cnt = 0;
+        // for (auto & snode: cg.snodes){
+        //     if (snode.min_nid > upto) break;
+        //     if (snode.inputCnt == 0){
+        //         cg.stypes[snode.type].frontiers.push_back(sid);
+        //         frontier_type_cnt += 1;
+        //     }
+        //     sid++;
         // }
+        // fprintf(stdout, "[OoC::forward]: frontier_type_cnt: %d\n", frontier_type_cnt);
+
+        memory_affinity.resize(cg.snodes.size(), 0);
+
         if (profiling_flag > 1)
         {
             node2mem_pos.resize(uptop1, 0);
@@ -515,13 +543,15 @@ namespace dynet
         // Create the necessary info for batching in the future
         // construct_snode_graph_OoC(upto);
         int old_num_nodes_evaluated = num_nodes_evaluated;
-        commit_unbatchables(upto);
         if (cg.schedule_mode == INFERENCE)
             fprintf(stdout, "inference\n");
         else
             fprintf(stdout, "train\n");
         schedule_snode_graph_rl();
-        if (profiling_flag > 2)
+        commit_unbatchables(upto);
+        start_indices.push_back(num_batch_committed);
+
+        if (profiling_flag > 1)
         {
             vector<bool> visited(uptop1, false);
             for (int bid = old_num_nodes_evaluated; bid != num_batch_committed; bid++)
@@ -534,6 +564,11 @@ namespace dynet
                     visited[id] = true;
                 }
             }
+            function <int(int)> get_sid = [&](int bid){
+                int ret = 0;
+                while (start_indices[ret] <= bid) ret++;
+                return ret-1;
+            };
             for (int i = old_num_nodes_evaluated; i <= upto; i++)
             {
                 if (!visited[i] || !(node2batch[i] >= 0))
@@ -546,39 +581,66 @@ namespace dynet
                 assert(node2batch[i] < num_batch_committed);
 
                 const Node *node = cg.nodes[i];
+                auto this_sbid = get_sid(node2batch[i]);
                 for (auto arg : node->args)
                 {
-                    assert(node2batch[i] > node2batch[arg]);
+                    auto that_sbid =  get_sid(node2batch[arg]);
+                    if (this_sbid == that_sbid) {
+                        if (node2batch[i] <= node2batch[arg]){
+                            int this_type = cg.sigmap.sig2type(cg.nodes[i]->autobatch_sig(cg, cg.sigmap));
+                            int that_type = cg.sigmap.sig2type(cg.nodes[arg]->autobatch_sig(cg, cg.sigmap));
+                            fprintf(stdout, "num_batch_committed %d\n", num_batch_committed);
+                            fprintf(stdout, "node %d %s %d; input %d %s %d\n", i, type2name[this_type].c_str(), node2batch[i], arg, type2name[that_type].c_str(), node2batch[arg]);
+                        }
+                        assert(node2batch[i] > node2batch[arg]);
+                    }
+                    else {
+                        if (this_sbid > that_sbid){
+                            int this_type = cg.sigmap.sig2type(cg.nodes[i]->autobatch_sig(cg, cg.sigmap));
+                            int that_type = cg.sigmap.sig2type(cg.nodes[arg]->autobatch_sig(cg, cg.sigmap));
+                            fprintf(stdout, "num_batch_committed %d\n", num_batch_committed);
+                            fprintf(stdout, "node %d %s %d; input %d %s %d\n", i, type2name[this_type].c_str(), node2batch[i], arg, type2name[that_type].c_str(), node2batch[arg]);
+                            fprintf(stdout, "thisbid: \n");
+                            assert(this_sbid >= 0);
+                            for (int bid = start_indices[this_sbid]; bid < start_indices[this_sbid + 1]; bid++){
+                                fprintf(stdout, "\tbid %d: ", bid);
+                                for (auto id: batches[bid].ids){
+                                    int type = cg.sigmap.sig2type(cg.nodes[id]->autobatch_sig(cg, cg.sigmap));
+                                    fprintf(stdout, "(%d, %s), ", id, type2name[type].c_str()); 
+                                }
+                                fprintf(stdout, "\n");
+                            }
+                            fprintf(stdout, "thatbid: \n");
+                            assert(that_sbid >= 0);
+                            for (int bid = start_indices[that_sbid]; bid < start_indices[that_sbid + 1]; bid++){
+                                fprintf(stdout, "\tbid %d: ", bid);
+                                for (auto id: batches[bid].ids){
+                                    int type = cg.nodes[id]->autobatch_sig(cg, cg.sigmap);
+                                    fprintf(stdout, "(%d, %s), ", id, type2name[type].c_str()); 
+                                }
+                                fprintf(stdout, "\n");
+                            }
+                        }
+                        assert(this_sbid < that_sbid);
+                    }
                 }
             }
             for (auto &stype : cg.stypes)
             {
                 assert(stype.frontiers.size() == 0);
-                assert(stype.cnt == 0);
+                // assert(stype.cnt == 0);
             }
             fprintf(stdout, "[OoC::check]: [%d, %d], dependency test passed!\n", old_num_nodes_evaluated, upto);
         }
         fprintf(stdout, "OoC: commit %d batch\n", num_batch_committed);
-        localTimer.cumint("n_kernels", num_batch_committed);
-        localTimer.start("execution");
+        global_timer.cumint("n_kernels", num_batch_committed);
+        global_timer.start("execution");
         // fprintf(stdout, "OoC: begin execution\n");
         execution(upto);
-        localTimer.stop("execution");
+        global_timer.stop("execution");
         assert(num_batch_committed == num_batches_evaluated);
-        localTimer.stop("total");
-        localTimer.show();
-        if (store_file.size()){
-            localTimer.save(store_file);
-        }
-        // localTimer.save("./timing");
-        string graphname = "S" + to_string(graph_id);
-        export_snode_graph("./graph/" + graphname + ".txt");
-        graphname = "G" + to_string(graph_id);
-        export_graph(upto, "./graph/" + graphname + ".txt");
-        // for (auto &stype : cg.stypes)
-        // {
-        //     assert(stype.cnt == 0 && stype.frontiers.size() == 0);
-        // }
+        global_timer.stop("total");
+        global_timer.show();
         graph_id++;
         return;
     }
@@ -590,41 +652,55 @@ namespace dynet
         ofstream file;
         file.open(filename);
         file << "digraph " << graphname << "{\n";
-        function<string(int)> getName = [&](int sid){
+        function<string(int)> getName = [&](int sid)
+        {
             return "S" + to_string(sid) + "_" + to_string(cg.snodes[sid].type) + "_" + to_string(cg.snodes[sid].bid);
         };
-        
+
         unordered_map<int, string> bid2color;
         int nid = num_nodes_evaluated;
         file << "\tnode [style=filled]\n";
-        while(nid <= upto){
+        while (nid <= upto)
+        {
             int sid = cg.nid2sid[nid];
-            if (sid < 0) {nid++; continue;}
+            if (sid < 0)
+            {
+                nid++;
+                continue;
+            }
             unordered_map<int, bool> preds;
-            while (nid <= upto && cg.nid2sid[nid] == sid){
-                for (auto arg: cg.nodes[nid]->args){
+            while (nid <= upto && cg.nid2sid[nid] == sid)
+            {
+                for (auto arg : cg.nodes[nid]->args)
+                {
                     int that_sid = cg.nid2sid[arg];
-                    if (that_sid < 0) continue;
-                    if (preds.count(that_sid) == 0) preds[that_sid] = false;
-                    if (mem_transfer_edges && mem_transfer_edges -> count({arg, nid}) != 0){
+                    if (that_sid < 0)
+                        continue;
+                    if (preds.count(that_sid) == 0)
+                        preds[that_sid] = false;
+                    if (mem_transfer_edges && mem_transfer_edges->count({arg, nid}) != 0)
+                    {
                         preds[that_sid] = true;
                     }
                 }
                 nid++;
             }
             auto this_name = getName(sid);
-            for (auto & kv: preds){
+            for (auto &kv : preds)
+            {
                 file << "\t" << getName(kv.first) << "->" << this_name;
-                if (kv.second) file << "\t[color=\"red\"]";
+                if (kv.second)
+                    file << "\t[color=\"red\"]";
                 file << endl;
             }
             int bid = cg.snodes[sid].bid;
-            if (bid2color.count(bid) == 0){
+            if (bid2color.count(bid) == 0)
+            {
                 char tmp[10];
                 sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
                 bid2color[bid] = string(tmp);
             }
-            file << this_name << "\t[color=\""<< bid2color[bid] << "\"]" << endl;
+            file << this_name << "\t[color=\"" << bid2color[bid] << "\"]" << endl;
         }
 
         file << "}\n";
@@ -632,6 +708,7 @@ namespace dynet
 
     void BatchedExecutionEngine::commit_unbatchables(VariableIndex upto)
     {
+        start_indices.push_back(num_batch_committed);
         list<int> &ops = cg.unbatchable_ops;
         while (ops.size() && ops.front() <= upto)
         {
@@ -731,7 +808,6 @@ namespace dynet
                 ret += "_" + to_string(node2mem_pos[nid]) + "_" + to_string(cg.nid2sid[nid]);
             return ret;
         };
-        
 
         for (int j = num_nodes_evaluated; j <= upto; j++)
         {
@@ -746,7 +822,7 @@ namespace dynet
                 file << "\t" << from_str << "->" << node_str;
                 file << "\t[";
                 // if (cg.nid2sid[arg] != cg.nid2sid[j] && cg.nid2sid[arg] >= 0) {
-                //     file << "ltail=cluser_" << cg.nid2sid[arg] << " lhead=cluster_" << cg.nid2sid[j]; 
+                //     file << "ltail=cluser_" << cg.nid2sid[arg] << " lhead=cluster_" << cg.nid2sid[j];
                 // }
                 if (mem_transfer_edges && mem_transfer_edges->count({arg, j}))
                     file << " color=\"red\"";
@@ -757,28 +833,55 @@ namespace dynet
 
         int nid = num_nodes_evaluated;
         unordered_map<int, string> bid2color;
-        while(nid <= upto){
+        while (nid <= upto)
+        {
             int sid = cg.nid2sid[nid];
             int bid = cg.snodes[sid].bid;
-            if (sid == -1) {
-                nid ++;
+            if (sid == -1)
+            {
+                nid++;
                 continue;
             }
-            if (bid2color.count(bid) == 0){
+            if (bid2color.count(bid) == 0)
+            {
                 char tmp[10];
                 sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
                 bid2color[bid] = string(tmp);
             }
-            while (nid <= upto && cg.nid2sid[nid] == sid){
-                file << "\t" <<  getName(nid) << "\t[color=\"" << bid2color[bid] << "\"];\n";
+            while (nid <= upto && cg.nid2sid[nid] == sid)
+            {
+                file << "\t" << getName(nid) << "\t[color=\"" << bid2color[bid] << "\"];\n";
                 nid++;
             }
-            
         }
-        
+
         file << "}\n";
         file.close();
         return;
+    }
+
+    int BatchedExecutionEngine::lower_bound(){
+        int depth[cg.nodes.size()][cg.sigmap.size()];
+        int max_depth[cg.sigmap.size()];
+        memset(depth, 0, sizeof(depth));
+        memset(max_depth, 0, sizeof(max_depth));
+        
+        for (int i = 0; i < cg.nodes.size(); i++){
+            auto this_sig = cg.nodes[i]->autobatch_sig(cg,cg.sigmap);
+            for (int j = 0; j < cg.sigmap.size(); j++){
+                auto & d = depth[i][j];
+                d = (this_sig == j);
+                for (auto arg: cg.nodes[i]->args){
+                    d = max(d, (this_sig == j) + depth[arg][j]);
+                }
+                max_depth[j] = max(max_depth[j], d);
+            }
+        }
+        int ret =0 ;
+        for (int i = 0; i < cg.sigmap.size(); i++){
+            ret += max_depth[i];
+        }
+        return ret;
     }
 
 } // namespace dynet

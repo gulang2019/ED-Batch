@@ -510,6 +510,8 @@ struct ComputationGraph {
   std::vector<int> nid2sid;
   std::list<int> unbatchable_ops;
   void mark_basic_block();
+  void mark_sum();
+  void export_snode_graph(std::string filename);
 
   // data
   std::vector<Node*> nodes;  // **stored in topological order**
