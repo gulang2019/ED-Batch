@@ -455,7 +455,9 @@ const Tensor& BatchedExecutionEngine::forward() {
 }
 
 const Tensor& BatchedExecutionEngine::forward(VariableIndex i) {
+  global_timer.start("invalidate");
   invalidate();
+  global_timer.stop("invalidate");
   return incremental_forward(i);
 }
 
@@ -507,7 +509,19 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
   if (profiling_flag > 1){
     fprintf(stdout, "[dynet::autobatch]: lower_bound %d batches\n", lower_bound());
   }
+  string graphname = "B" + to_string(autobatch_strategy) + "_" + to_string(graph_id++);
+  visualize(upto, "./pics/" + graphname + ".gv", graphname, nullptr);
   // cerr << "running graph" << endl; cg.print_graphviz();
+
+  if (profiling_flag > 1){
+    for (int j = num_nodes_evaluated; j <= upto; j++){
+      fprintf(stdout, "(%d, %s): ", j, OoC::type2name[cg.sigmap.sig2type(cg.nodes[j]->autobatch_sig(cg, cg.sigmap))].c_str());
+      for (auto arg: cg.nodes[j]->args) {
+        fprintf(stdout, "(%d, %s), ", arg, OoC::type2name[cg.sigmap.sig2type(cg.nodes[arg]->autobatch_sig(cg, cg.sigmap))].c_str());
+      }
+      fprintf(stdout, "\n");
+    }
+  }
 
   if (upto >= num_nodes_evaluated) {
     if (autobatch_strategy == 7){
@@ -1392,9 +1406,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     
     global_timer.stop("execution");
     global_timer.stop("total");
-    global_timer.show();
-    string graphname = "B" + to_string(autobatch_strategy) + "_" + to_string(graph_id++);
-    visualize(upto, "./pics/" + graphname + ".gv", graphname, &mem_transfer_edges);
+    // global_timer.show();
     free(node2profid);
   }
 
@@ -1404,9 +1416,11 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
 
 const Tensor& BatchedExecutionEngine::incremental_forward(VariableIndex i) {
   DYNET_ASSERT(i < cg.nodes.size(), "Out-of-bounds variable access in BatchedExecutionEngine::incremental_forward()");
-
+  
+  global_timer.start("garbage_collect");
   if (num_nodes_evaluated == 0)
     garbage_collect();
+  global_timer.stop("garbage_collect");
 
   if (autobatch_flag > 99) {
     Timing timer;

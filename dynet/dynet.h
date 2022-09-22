@@ -492,11 +492,7 @@ struct ComputationGraph {
 
   static SigMap sigmap;
   static std::vector<OoC::typeInfo> stypes;
-  struct BBInfo{
-    int stid;
-    std::vector<std::pair<int, int> > pred_pos;
-  };
-  static OoC::Trie<BBInfo> head;
+  static OoC::Trie<OoC::BBInfo*> head;
   static OoC::PatternCache pattern_cache;
   enum mode_t {
     TRAIN, 
@@ -509,7 +505,7 @@ struct ComputationGraph {
   std::vector<OoC::supernodeInfo> snodes;
   std::vector<int> nid2sid;
   std::list<int> unbatchable_ops;
-  void mark_basic_block();
+  int mark_basic_block(int stid = -1);
   void mark_sum();
   void export_snode_graph(std::string filename);
 

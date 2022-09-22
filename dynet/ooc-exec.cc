@@ -500,11 +500,13 @@ namespace dynet
 
     void BatchedExecutionEngine::forward_OoC(VariableIndex upto)
     {
-        if (profiling_flag > 1){
+        if (profiling_flag > 1)
+        {
             int sum_cnt = 0;
-            for (int j = num_nodes_evaluated; j <= upto; ++j){
+            for (int j = num_nodes_evaluated; j <= upto; ++j)
+            {
                 int type = cg.sigmap.sig2type(cg.nodes[j]->autobatch_sig(cg, cg.sigmap));
-                if (type == op_type::sum) 
+                if (type == op_type::sum)
                     sum_cnt++;
             }
             fprintf(stdout, "sum: %d\n", sum_cnt);
@@ -564,10 +566,12 @@ namespace dynet
                     visited[id] = true;
                 }
             }
-            function <int(int)> get_sid = [&](int bid){
+            function<int(int)> get_sid = [&](int bid)
+            {
                 int ret = 0;
-                while (start_indices[ret] <= bid) ret++;
-                return ret-1;
+                while (start_indices[ret] <= bid)
+                    ret++;
+                return ret - 1;
             };
             for (int i = old_num_nodes_evaluated; i <= upto; i++)
             {
@@ -584,9 +588,11 @@ namespace dynet
                 auto this_sbid = get_sid(node2batch[i]);
                 for (auto arg : node->args)
                 {
-                    auto that_sbid =  get_sid(node2batch[arg]);
-                    if (this_sbid == that_sbid) {
-                        if (node2batch[i] <= node2batch[arg]){
+                    auto that_sbid = get_sid(node2batch[arg]);
+                    if (this_sbid == that_sbid)
+                    {
+                        if (node2batch[i] <= node2batch[arg])
+                        {
                             int this_type = cg.sigmap.sig2type(cg.nodes[i]->autobatch_sig(cg, cg.sigmap));
                             int that_type = cg.sigmap.sig2type(cg.nodes[arg]->autobatch_sig(cg, cg.sigmap));
                             fprintf(stdout, "num_batch_committed %d\n", num_batch_committed);
@@ -594,29 +600,35 @@ namespace dynet
                         }
                         assert(node2batch[i] > node2batch[arg]);
                     }
-                    else {
-                        if (this_sbid > that_sbid){
+                    else
+                    {
+                        if (this_sbid > that_sbid)
+                        {
                             int this_type = cg.sigmap.sig2type(cg.nodes[i]->autobatch_sig(cg, cg.sigmap));
                             int that_type = cg.sigmap.sig2type(cg.nodes[arg]->autobatch_sig(cg, cg.sigmap));
                             fprintf(stdout, "num_batch_committed %d\n", num_batch_committed);
                             fprintf(stdout, "node %d %s %d; input %d %s %d\n", i, type2name[this_type].c_str(), node2batch[i], arg, type2name[that_type].c_str(), node2batch[arg]);
                             fprintf(stdout, "thisbid: \n");
                             assert(this_sbid >= 0);
-                            for (int bid = start_indices[this_sbid]; bid < start_indices[this_sbid + 1]; bid++){
+                            for (int bid = start_indices[this_sbid]; bid < start_indices[this_sbid + 1]; bid++)
+                            {
                                 fprintf(stdout, "\tbid %d: ", bid);
-                                for (auto id: batches[bid].ids){
+                                for (auto id : batches[bid].ids)
+                                {
                                     int type = cg.sigmap.sig2type(cg.nodes[id]->autobatch_sig(cg, cg.sigmap));
-                                    fprintf(stdout, "(%d, %s), ", id, type2name[type].c_str()); 
+                                    fprintf(stdout, "(%d, %s), ", id, type2name[type].c_str());
                                 }
                                 fprintf(stdout, "\n");
                             }
                             fprintf(stdout, "thatbid: \n");
                             assert(that_sbid >= 0);
-                            for (int bid = start_indices[that_sbid]; bid < start_indices[that_sbid + 1]; bid++){
+                            for (int bid = start_indices[that_sbid]; bid < start_indices[that_sbid + 1]; bid++)
+                            {
                                 fprintf(stdout, "\tbid %d: ", bid);
-                                for (auto id: batches[bid].ids){
+                                for (auto id : batches[bid].ids)
+                                {
                                     int type = cg.nodes[id]->autobatch_sig(cg, cg.sigmap);
-                                    fprintf(stdout, "(%d, %s), ", id, type2name[type].c_str()); 
+                                    fprintf(stdout, "(%d, %s), ", id, type2name[type].c_str());
                                 }
                                 fprintf(stdout, "\n");
                             }
@@ -640,7 +652,7 @@ namespace dynet
         global_timer.stop("execution");
         assert(num_batch_committed == num_batches_evaluated);
         global_timer.stop("total");
-        global_timer.show();
+        // global_timer.show();
         graph_id++;
         return;
     }
@@ -794,7 +806,7 @@ namespace dynet
 
     void BatchedExecutionEngine::visualize(int upto, string filename, string graphname, unordered_set<pair<int, int>, hash_pair> *mem_transfer_edges)
     {
-        if (profiling_flag <= 1 || autobatch_flag != 7)
+        if (profiling_flag <= 1)
             return;
         ofstream file;
         file.open(filename);
@@ -803,7 +815,7 @@ namespace dynet
         function<string(int)> getName = [&](int nid)
         {
             auto sig = cg.nodes[nid]->autobatch_sig(cg, cg.sigmap);
-            string ret = OoC::type2name[cg.sigmap.sig2type(sig)] + "_" + to_string(sig) + "_" + to_string(nid) + "_" + to_string(node2batch[nid]);
+            string ret = OoC::type2name[cg.sigmap.sig2type(sig)] + "_" + to_string(sig) + "_" + to_string(nid);
             if (autobatch_flag == 7)
                 ret += "_" + to_string(node2mem_pos[nid]) + "_" + to_string(cg.nid2sid[nid]);
             return ret;
@@ -821,9 +833,6 @@ namespace dynet
                 string from_str = getName(arg);
                 file << "\t" << from_str << "->" << node_str;
                 file << "\t[";
-                // if (cg.nid2sid[arg] != cg.nid2sid[j] && cg.nid2sid[arg] >= 0) {
-                //     file << "ltail=cluser_" << cg.nid2sid[arg] << " lhead=cluster_" << cg.nid2sid[j];
-                // }
                 if (mem_transfer_edges && mem_transfer_edges->count({arg, j}))
                     file << " color=\"red\"";
                 file << "]";
@@ -831,27 +840,30 @@ namespace dynet
             }
         }
 
-        int nid = num_nodes_evaluated;
-        unordered_map<int, string> bid2color;
-        while (nid <= upto)
+        if (autobatch_flag == 7)
         {
-            int sid = cg.nid2sid[nid];
-            int bid = cg.snodes[sid].bid;
-            if (sid == -1)
+            int nid = num_nodes_evaluated;
+            unordered_map<int, string> bid2color;
+            while (nid <= upto)
             {
-                nid++;
-                continue;
-            }
-            if (bid2color.count(bid) == 0)
-            {
-                char tmp[10];
-                sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
-                bid2color[bid] = string(tmp);
-            }
-            while (nid <= upto && cg.nid2sid[nid] == sid)
-            {
-                file << "\t" << getName(nid) << "\t[color=\"" << bid2color[bid] << "\"];\n";
-                nid++;
+                int sid = cg.nid2sid[nid];
+                int bid = cg.snodes[sid].bid;
+                if (sid == -1)
+                {
+                    nid++;
+                    continue;
+                }
+                if (bid2color.count(bid) == 0)
+                {
+                    char tmp[10];
+                    sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
+                    bid2color[bid] = string(tmp);
+                }
+                while (nid <= upto && cg.nid2sid[nid] == sid)
+                {
+                    file << "\t" << getName(nid) << "\t[color=\"" << bid2color[bid] << "\"];\n";
+                    nid++;
+                }
             }
         }
 
@@ -860,25 +872,30 @@ namespace dynet
         return;
     }
 
-    int BatchedExecutionEngine::lower_bound(){
+    int BatchedExecutionEngine::lower_bound()
+    {
         int depth[cg.nodes.size()][cg.sigmap.size()];
         int max_depth[cg.sigmap.size()];
         memset(depth, 0, sizeof(depth));
         memset(max_depth, 0, sizeof(max_depth));
-        
-        for (int i = 0; i < cg.nodes.size(); i++){
-            auto this_sig = cg.nodes[i]->autobatch_sig(cg,cg.sigmap);
-            for (int j = 0; j < cg.sigmap.size(); j++){
-                auto & d = depth[i][j];
+
+        for (int i = 0; i < cg.nodes.size(); i++)
+        {
+            auto this_sig = cg.nodes[i]->autobatch_sig(cg, cg.sigmap);
+            for (int j = 0; j < cg.sigmap.size(); j++)
+            {
+                auto &d = depth[i][j];
                 d = (this_sig == j);
-                for (auto arg: cg.nodes[i]->args){
+                for (auto arg : cg.nodes[i]->args)
+                {
                     d = max(d, (this_sig == j) + depth[arg][j]);
                 }
                 max_depth[j] = max(max_depth[j], d);
             }
         }
-        int ret =0 ;
-        for (int i = 0; i < cg.sigmap.size(); i++){
+        int ret = 0;
+        for (int i = 0; i < cg.sigmap.size(); i++)
+        {
             ret += max_depth[i];
         }
         return ret;

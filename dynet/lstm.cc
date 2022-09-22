@@ -482,7 +482,6 @@ Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
   Expression in = x;
   if ((dropout_rate > 0.f || dropout_rate_h > 0.f) && !dropout_masks_valid) set_dropout_masks(x.dim().bd);
   for (unsigned i = 0; i < layers; ++i) {
-    mark_basic_block(_cg, -1, true);
     _cg->mark_basic_block();
     const vector<Expression>& vars = param_vars[i];
 
@@ -524,9 +523,6 @@ Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
         tmp = affine_transform({vars[_BI], vars[_X2I], in});
     }
     _cg->mark_basic_block();
-    // mark_basic_block(_cg, -4, true);
-    if (has_prev_state) mark_basic_block(_cg, -2, true);
-    else mark_basic_block(_cg, -3, true);
     i_ait = pick_range(tmp, 0, hid);
     i_aft = pick_range(tmp, hid, hid * 2);
     i_aot = pick_range(tmp, hid * 2, hid * 3);
