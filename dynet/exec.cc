@@ -299,7 +299,7 @@ OoC::DynamicBatching BatchedExecutionEngine::db("train", "information_entropy");
 // OoC::Trie BatchedExecutionEngine::head;
 // vector<OoC::typeInfo> BatchedExecutionEngine::stypes;
 // SigMap BatchedExecutionEngine::sigmap;
-OoC::QLearningModel model;
+OoC::ParallelQLearningModel model;
 OoC::Scheduler& BatchedExecutionEngine::scheduler = model;
 
 int BatchedExecutionEngine::graph_id(0);
@@ -506,11 +506,11 @@ void BatchedExecutionEngine::garbage_collect() {
 const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     VariableIndex upto, int autobatch_strategy) {
   timer.clear();
-  if (profiling_flag > 1){
-    fprintf(stdout, "[dynet::autobatch]: lower_bound %d batches\n", lower_bound());
-  }
-  string graphname = "B" + to_string(autobatch_strategy) + "_" + to_string(graph_id++);
-  visualize(upto, "./pics/" + graphname + ".gv", graphname, nullptr);
+  // global_timer.start("profiling");
+  // int lb = lower_bound();
+  // global_timer.log("lower_bound", lb);
+  // fprintf(stdout, "[dynet::autobatch]: lower_bound %d batches\n", lb);
+  // global_timer.stop("profiling");
   // cerr << "running graph" << endl; cg.print_graphviz();
 
   if (profiling_flag > 1){
@@ -1180,6 +1180,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     // 2.5 print some debug info
     cerr << "Forward Call Batch_strategy " << autobatch_strategy  << " : " << batch_id << " kernels."  << endl;
     timer.cumint("n_kernels", batch_id);
+    global_timer.log("n_kernel", batch_id);
     global_timer.cumint("n_kernels", batch_id);
 
     if (profiling_flag > 1) {
@@ -1406,6 +1407,8 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     
     global_timer.stop("execution");
     global_timer.stop("total");
+    string graphname = "B" + to_string(autobatch_strategy) + "_" + to_string(graph_id++);
+    visualize(upto, "./pics/" + graphname + ".gv", graphname, &mem_transfer_edges);
     // global_timer.show();
     free(node2profid);
   }

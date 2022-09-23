@@ -112,25 +112,15 @@ namespace dynet
         auto &snode = snodes.back();
         snode.min_nid = n_marked_node;
 
-        // unordered_set<int> preds;
+        // results.emplace_back(thread_pool.enqueue([&]{
         for (auto &kv : data->pred_pos)
         {
             int nid = nodes[n_marked_node + kv.first]->args[kv.second];
             int arg_sid = nid2sid[nid];
-            if (!(arg_sid >= 0 && nid < n_marked_node && arg_sid < sid))
-            {
-                fprintf(stderr, "this_nid %d, nid %d, arg_sid %d, sid %d, n_marked_node %d, pattern: ", n_marked_node + kv.first, nid, arg_sid, sid, n_marked_node);
-                for (int nid = n_marked_node; nid < nodes.size(); nid++)
-                {
-                    fprintf(stderr, "%s, ", type2name[sigmap.sig2type(nodes[nid]->autobatch_sig(*this, sigmap))].c_str());
-                }
-                fprintf(stdout, "\n");
-                assert(false);
-            }
-            snodes[arg_sid].inputCnt++;
+            // snodes[arg_sid].inputCnt++;
             snode.succs.push_back(arg_sid);
-            // preds.insert(nid2sid[nid]);
         }
+        // }));
 
         stid = data->stid;
         snode.type = stid;
@@ -188,7 +178,7 @@ namespace dynet
         {
             int arg_sid = nid2sid[arg];
             assert(arg_sid >= 0);
-            snodes[arg_sid].inputCnt++;
+            // snodes[arg_sid].inputCnt++;
             snode.succs.push_back(arg_sid);
         }
         n_marked_node = nodes.size();
@@ -211,14 +201,3 @@ namespace dynet
     }
 
 } // namespace dynet
-
-/*
-
-computation graph: mark_basic_block
-    cg.snodes,
-stypes,
-study from computation graph:
-computation graph executor static scheduler
-
-
-*/

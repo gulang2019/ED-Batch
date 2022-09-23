@@ -1,5 +1,6 @@
 #include "dynet.h"
 #include "dynet/expr.h"
+#include "utils.h"
 
 namespace OoC
 {
@@ -9,16 +10,25 @@ namespace OoC
         typedef std::function<void(const std::vector<dynet::Expression> & input, const std::vector<int> & params, std::vector<dynet::Expression> & output)> func_t;
         SuperNode(dynet::ComputationGraph* cg, func_t f, std::string name="S"): _cg(cg), _func(f), _name(name){}
         std::vector<dynet::Expression> operator()(const std::vector<dynet::Expression> & input, const std::vector<int> & params, bool mark_basic_block = false);
+        static int reset(){
+            int ret = n_node;
+            n_node = 0;
+            return ret;
+        }
 
     private:
-        bool first_time = true;
+        static int n_node;
+        struct log_t{
+            int first_time = true;
+            dynet::VariableIndex begin, end;
+            std::unordered_map<dynet::VariableIndex, int> nid2aid;
+            std::vector<int> output_indices;
+            int _stid;
+        };
+        TupleDict<log_t> params_dict; 
         func_t _func;
-        dynet::VariableIndex begin, end;
         dynet::ComputationGraph *_cg;
-        std::unordered_map<dynet::VariableIndex, int> nid2aid;
-        std::vector<int> output_indices;
         std::string _name;
-        int _stid;
     };
 
     class FakeNode : public dynet::Node

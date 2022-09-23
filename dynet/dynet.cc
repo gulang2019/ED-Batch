@@ -350,7 +350,9 @@ void ComputationGraph::set_dim_for_new_node(const VariableIndex& i) {
 }
 
 const Tensor& ComputationGraph::incremental_forward(const Expression& last) { return ee->incremental_forward(last.i); }
-const Tensor& ComputationGraph::forward(const Expression& last) { return ee->forward(last.i); }
+const Tensor& ComputationGraph::forward(const Expression& last) { 
+  return ee->forward(last.i); 
+}
 const Tensor& ComputationGraph::incremental_forward(VariableIndex last) { return ee->incremental_forward(last); }
 const Tensor& ComputationGraph::forward(VariableIndex last) { return ee->forward(last); }
 const Tensor& ComputationGraph::get_value(VariableIndex i) { return ee->get_value(i); }

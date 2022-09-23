@@ -10,6 +10,8 @@
 #include "dynet/dynet.h"
 #include "dynet/rnn.h"
 #include "dynet/expr.h"
+#include "dynet/ooc-computation_graph.h"
+
 
 namespace dynet {
 
@@ -284,6 +286,7 @@ protected:
   Expression add_input_impl(int prev, const Expression& x) override;
   Expression set_h_impl(int prev, const std::vector<Expression>& h_new) override;
   Expression set_s_impl(int prev, const std::vector<Expression>& s_new) override;
+  void define_bb();
 
 public:
   ParameterCollection local_model;
@@ -317,7 +320,7 @@ public:
 
 private:
   ComputationGraph* _cg; // Pointer to current cg
-
+  OoC::SuperNode * bb_affine, *bb_gates;
 };
 
 

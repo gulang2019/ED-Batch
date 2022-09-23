@@ -20,6 +20,7 @@
 #include "dynet/sig.h"
 #include "dynet/tensor.h"
 #include "dynet/device-structs.h"
+#include "utils.h"
 
 namespace dynet {
 

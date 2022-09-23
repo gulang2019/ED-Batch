@@ -521,18 +521,17 @@ namespace dynet
         // node2size.resize(uptop1, 0);
         batches.resize(upto - num_nodes_evaluated + num_batches_evaluated + 1);
 
-        cg.stypes[cg.snodes[cg.nid2sid[upto]].type].frontiers.push_back(cg.nid2sid[upto]);
-        // int sid = 0;
-        // int frontier_type_cnt = 0;
-        // for (auto & snode: cg.snodes){
-        //     if (snode.min_nid > upto) break;
-        //     if (snode.inputCnt == 0){
-        //         cg.stypes[snode.type].frontiers.push_back(sid);
-        //         frontier_type_cnt += 1;
-        //     }
-        //     sid++;
-        // }
-        // fprintf(stdout, "[OoC::forward]: frontier_type_cnt: %d\n", frontier_type_cnt);
+        // cg.stypes[cg.snodes[cg.nid2sid[upto]].type].frontiers.push_back(cg.nid2sid[upto]);
+        int frontier_type_cnt = 0;
+        for (int sid = cg.snodes.size()-1; sid >= 0; sid--){  
+            auto & snode = cg.snodes[sid]; 
+            if (snode.inputCnt == 0){
+                cg.stypes[snode.type].frontiers.push_back(sid);
+                frontier_type_cnt += 1;
+            }
+            for (auto succ: snode.succs) cg.snodes[succ].inputCnt++;   
+        }
+        fprintf(stdout, "[OoC::forward]: frontier_type_cnt: %d\n", frontier_type_cnt);
 
         memory_affinity.resize(cg.snodes.size(), 0);
 
@@ -645,6 +644,7 @@ namespace dynet
             fprintf(stdout, "[OoC::check]: [%d, %d], dependency test passed!\n", old_num_nodes_evaluated, upto);
         }
         fprintf(stdout, "OoC: commit %d batch\n", num_batch_committed);
+        global_timer.log("n_kernel", num_batch_committed);
         global_timer.cumint("n_kernels", num_batch_committed);
         global_timer.start("execution");
         // fprintf(stdout, "OoC: begin execution\n");
@@ -793,11 +793,6 @@ namespace dynet
             }
             if (!state.size())
                 break;
-            // fprintf(stdout, "state: ");
-            // for (auto type: state){
-            //     fprintf(stdout, "%d, ", type);
-            // }
-            // fprintf(stdout, "\n");
             int act = scheduler.get_action(state);
             commit_batch_OoC(act);
         }
@@ -874,29 +869,24 @@ namespace dynet
 
     int BatchedExecutionEngine::lower_bound()
     {
-        int depth[cg.nodes.size()][cg.sigmap.size()];
-        int max_depth[cg.sigmap.size()];
-        memset(depth, 0, sizeof(depth));
-        memset(max_depth, 0, sizeof(max_depth));
+        int n_type = cg.sigmap.size();
+        vector<int> depth(cg.nodes.size());
 
-        for (int i = 0; i < cg.nodes.size(); i++)
+        int ret = 0;
+        for (int j = 0; j < n_type; j++)
         {
-            auto this_sig = cg.nodes[i]->autobatch_sig(cg, cg.sigmap);
-            for (int j = 0; j < cg.sigmap.size(); j++)
+            int max_depth = 0;
+            for (int i = 0; i < cg.nodes.size(); i++)
             {
-                auto &d = depth[i][j];
-                d = (this_sig == j);
+                auto this_sig = cg.nodes[i]->autobatch_sig(cg, cg.sigmap);
+                depth[i] = (this_sig == j);
                 for (auto arg : cg.nodes[i]->args)
                 {
-                    d = max(d, (this_sig == j) + depth[arg][j]);
+                    depth[i] = max(depth[i], (this_sig == j) + depth[arg]);
                 }
-                max_depth[j] = max(max_depth[j], d);
+                max_depth = max(max_depth, depth[i]);
             }
-        }
-        int ret = 0;
-        for (int i = 0; i < cg.sigmap.size(); i++)
-        {
-            ret += max_depth[i];
+            ret += max_depth;
         }
         return ret;
     }
