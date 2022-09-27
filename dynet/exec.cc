@@ -515,12 +515,13 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
 
   if (profiling_flag > 1){
     for (int j = num_nodes_evaluated; j <= upto; j++){
-      fprintf(stdout, "(%d, %s): ", j, OoC::type2name[cg.sigmap.sig2type(cg.nodes[j]->autobatch_sig(cg, cg.sigmap))].c_str());
+      fprintf(stdout, "(%d, %s, %s): ", j, OoC::type2name[cg.sigmap.sig2type(cg.nodes[j]->autobatch_sig(cg, cg.sigmap))].c_str(), cg.nodes[j]->as_dummy_string().c_str());
       for (auto arg: cg.nodes[j]->args) {
-        fprintf(stdout, "(%d, %s), ", arg, OoC::type2name[cg.sigmap.sig2type(cg.nodes[arg]->autobatch_sig(cg, cg.sigmap))].c_str());
+        fprintf(stdout, "(%d, %s, %s), ", arg, OoC::type2name[cg.sigmap.sig2type(cg.nodes[arg]->autobatch_sig(cg, cg.sigmap))].c_str(), cg.nodes[arg]->as_dummy_string().c_str());
       }
       fprintf(stdout, "\n");
     }
+    visualize(upto, "./graph/G_" + to_string(graph_id) + "before.gv", "G", nullptr);
   }
 
   if (upto >= num_nodes_evaluated) {

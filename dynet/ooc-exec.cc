@@ -138,10 +138,12 @@ namespace dynet
              { return memory_affinity[sid1] < memory_affinity[sid2]; });
         int batch_size = snode_batch.size();
         // frontierType.cnt -= batch_size;
-
+        
+        fprintf (stdout, "begin snode batch %d\n:", num_batch_committed);
         for (auto nid : snode_batch)
         {
             auto &snode = cg.snodes[nid];
+            fprintf (stdout, "\t[debug] snode[%d].nid = %d\n", nid, num_batch_committed);
             snode.bid = num_batch_committed;
             frontierType.pureNodeCnt -= (snode.dirtyInputCnt == 0);
             int aid = 0;
@@ -205,6 +207,7 @@ namespace dynet
         // }
         assert(pattern->mem_allocation_order.size() == pattern->n_batch);
         num_batch_committed += pattern->n_batch;
+        fprintf(stdout, "[debug]num_batch_commited %d += %d\n", num_batch_committed, pattern->n_batch);
         return hasUpdate;
     }
 
@@ -518,20 +521,7 @@ namespace dynet
         nfx_cache.resize(uptop1);
         node2batch.resize(uptop1, -1);
         node2offset.resize(uptop1, 0);
-        // node2size.resize(uptop1, 0);
         batches.resize(upto - num_nodes_evaluated + num_batches_evaluated + 1);
-
-        // cg.stypes[cg.snodes[cg.nid2sid[upto]].type].frontiers.push_back(cg.nid2sid[upto]);
-        int frontier_type_cnt = 0;
-        for (int sid = cg.snodes.size()-1; sid >= 0; sid--){  
-            auto & snode = cg.snodes[sid]; 
-            if (snode.inputCnt == 0){
-                cg.stypes[snode.type].frontiers.push_back(sid);
-                frontier_type_cnt += 1;
-            }
-            for (auto succ: snode.succs) cg.snodes[succ].inputCnt++;   
-        }
-        fprintf(stdout, "[OoC::forward]: frontier_type_cnt: %d\n", frontier_type_cnt);
 
         memory_affinity.resize(cg.snodes.size(), 0);
 
@@ -545,9 +535,9 @@ namespace dynet
         // construct_snode_graph_OoC(upto);
         int old_num_nodes_evaluated = num_nodes_evaluated;
         if (cg.schedule_mode == INFERENCE)
-            fprintf(stdout, "inference\n");
+            fprintf(stdout, "[OoC::exec]: inference\n");
         else
-            fprintf(stdout, "train\n");
+            fprintf(stdout, "[OoC::exec]: train\n");
         schedule_snode_graph_rl();
         commit_unbatchables(upto);
         start_indices.push_back(num_batch_committed);
@@ -647,12 +637,10 @@ namespace dynet
         global_timer.log("n_kernel", num_batch_committed);
         global_timer.cumint("n_kernels", num_batch_committed);
         global_timer.start("execution");
-        // fprintf(stdout, "OoC: begin execution\n");
         execution(upto);
         global_timer.stop("execution");
         assert(num_batch_committed == num_batches_evaluated);
         global_timer.stop("total");
-        // global_timer.show();
         graph_id++;
         return;
     }
@@ -811,8 +799,8 @@ namespace dynet
         {
             auto sig = cg.nodes[nid]->autobatch_sig(cg, cg.sigmap);
             string ret = OoC::type2name[cg.sigmap.sig2type(sig)] + "_" + to_string(sig) + "_" + to_string(nid);
-            if (autobatch_flag == 7)
-                ret += "_" + to_string(node2mem_pos[nid]) + "_" + to_string(cg.nid2sid[nid]);
+            // if (autobatch_flag == 7 && profiling_flag > 1)
+            //     ret += "_" + to_string(node2mem_pos[nid]) + "_" + to_string(cg.nid2sid[nid]);
             return ret;
         };
 

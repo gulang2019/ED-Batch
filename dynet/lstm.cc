@@ -476,6 +476,7 @@ Expression VanillaLSTMBuilder::set_s_impl(int prev, const std::vector<Expression
 }
 
 Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
+  _cg->mark_basic_block();
   h.push_back(vector<Expression>(layers));
   c.push_back(vector<Expression>(layers));
   vector<Expression>& ht = h.back();

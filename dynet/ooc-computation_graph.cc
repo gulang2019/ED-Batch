@@ -16,7 +16,7 @@ namespace OoC
         log_t& log = params_dict[params];
         if (log.first_time)
         {
-            log.first_time = false;
+            if (autobatch_flag == 7) log.first_time = false;
             log.begin = _cg->nodes.size();
             vector<Expression> out;
             _func(input, params, out);

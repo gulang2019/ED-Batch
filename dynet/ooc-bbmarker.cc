@@ -24,7 +24,7 @@ namespace dynet
         if (stid < 0)
         {
             int n_unbatchable = 0;
-            Trie<BBInfo*> * curr = &head;
+            Trie<BBInfo *> *curr = &head;
             for (int nid = n_marked_node; nid < nodes.size(); nid++)
             {
                 auto node = nodes[nid];
@@ -65,6 +65,7 @@ namespace dynet
                 curr->isLeaf = true;
                 int stid = stypes.size();
                 curr->data->stid = stid;
+                curr->data->nop = nodes.size() - n_marked_node;
                 stypes.push_back({});
                 vector<int> node2type;
                 vector<vector<int>> node2args;
@@ -103,7 +104,8 @@ namespace dynet
             }
             data = curr->data;
         }
-        else {
+        else
+        {
             data = stypes[stid].bbinfo;
             assert(data && stid == data->stid);
         }
@@ -111,28 +113,8 @@ namespace dynet
         snodes.push_back({});
         auto &snode = snodes.back();
         snode.min_nid = n_marked_node;
-
-        // results.emplace_back(thread_pool.enqueue([&]{
-        for (auto &kv : data->pred_pos)
-        {
-            int nid = nodes[n_marked_node + kv.first]->args[kv.second];
-            int arg_sid = nid2sid[nid];
-            // snodes[arg_sid].inputCnt++;
-            snode.succs.push_back(arg_sid);
-        }
-        // }));
-
-        stid = data->stid;
-        snode.type = stid;
-        auto &stype = stypes[stid];
-        if (stid >= n_stored_stypes)
-        {
-            n_new_ops += stype.pattern->nop;
-            if (n_new_ops > 1)
-                schedule_mode = TRAIN;
-        }
-        // if (!preds.size()) stype.frontiers.push_back(sid);
-        stype.cnt++;
+        snode.type = data->stid;
+        stypes[data->stid].cnt++;
 
         n_marked_node = nodes.size();
         if (profiling_flag)
@@ -140,7 +122,7 @@ namespace dynet
         return sid;
     }
 
-    void ComputationGraph::mark_sum()
+    void ComputationGraph::mark_sum_and_finish()
     {
         if (autobatch_flag != 7)
             return;
@@ -155,9 +137,8 @@ namespace dynet
         snode.min_nid = n_marked_node;
         Trie<BBInfo *> *curr = &head;
         if (curr->next.count(sig) == 0)
-        {
             curr->next[sig] = new Trie<BBInfo *>();
-        }
+
         curr = curr->next[sig];
         if (!curr->isLeaf)
         {
@@ -178,10 +159,50 @@ namespace dynet
         {
             int arg_sid = nid2sid[arg];
             assert(arg_sid >= 0);
-            // snodes[arg_sid].inputCnt++;
             snode.succs.push_back(arg_sid);
         }
         n_marked_node = nodes.size();
+
+        global_timer.start("synchronize snode");
+        vector<future<int>> results;
+        int n_thread = std::min(thread::hardware_concurrency(), ((unsigned)snodes.size() + 99) / 100);
+        int n_work = (snodes.size() + n_thread - 2) / n_thread;
+        for (int thread_id = 0; thread_id < n_thread; thread_id++)
+        {
+            results.emplace_back(async([thread_id, this, n_work]
+                                       {
+            int n_ops = 0;
+            for (int sid = thread_id * n_work; sid < std::min((thread_id+1)*n_work, (int)this->snodes.size()-1); sid++){
+                auto & snode = this->snodes[sid];
+                int stid = snode.type;
+                OoC::BBInfo * data = stypes[stid].bbinfo;
+                for (auto &kv : data->pred_pos){
+                    int nid = this->nodes[snode.min_nid + kv.first]->args[kv.second];
+                    int arg_sid = this->nid2sid[nid];
+                    snode.succs.push_back(arg_sid);
+                }
+                n_ops += stid >= this->n_stored_stypes? data->nop:0;
+            }
+            return n_ops; }));
+        }
+        int n_new_op = 0;
+        for (int thread_id = 0; thread_id < n_thread; thread_id++){
+            n_new_op += results[thread_id].get();
+        }
+        if (n_new_op > 1)
+            schedule_mode = TRAIN;
+
+        int frontier_type_cnt = 0;
+        for (int sid = snodes.size()-1; sid >= 0; sid--){  
+            auto & snode = snodes[sid]; 
+            if (snode.inputCnt == 0){
+                stypes[snode.type].frontiers.push_back(sid);
+                frontier_type_cnt += 1;
+            }
+            for (auto succ: snode.succs) snodes[succ].inputCnt++;   
+        }
+        global_timer.stop("synchronize snode");
+        fprintf(stdout, "[OoC::forward]: frontier_type_cnt: %d\n", frontier_type_cnt);
     }
 
     void ComputationGraph::export_snode_graph(string filename)
