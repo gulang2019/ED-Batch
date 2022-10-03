@@ -508,7 +508,7 @@ struct ComputationGraph {
   std::vector<int> nid2sid;
   std::list<int> unbatchable_ops;
   int mark_basic_block(int stid = -1);
-  void mark_sum_and_finish();
+  void construct_snode_graph();
   void export_snode_graph(std::string filename);
 
   // data

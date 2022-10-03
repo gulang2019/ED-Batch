@@ -206,8 +206,8 @@ namespace dynet
         //     execute_batch(batches[bid]);
         // }
         assert(pattern->mem_allocation_order.size() == pattern->n_batch);
-        num_batch_committed += pattern->n_batch;
         fprintf(stdout, "[debug]num_batch_commited %d += %d\n", num_batch_committed, pattern->n_batch);
+        num_batch_committed += pattern->n_batch;
         return hasUpdate;
     }
 
@@ -544,6 +544,11 @@ namespace dynet
 
         if (profiling_flag > 1)
         {
+            fprintf(stdout, "start_indices: ");
+            for (size_t i = 0; i < start_indices.size(); i++){
+                fprintf(stdout, "(%ld, %d), ", i, start_indices[i]);
+            }
+            fprintf(stdout, "\n");
             vector<bool> visited(uptop1, false);
             for (int bid = old_num_nodes_evaluated; bid != num_batch_committed; bid++)
             {
@@ -597,7 +602,7 @@ namespace dynet
                             int that_type = cg.sigmap.sig2type(cg.nodes[arg]->autobatch_sig(cg, cg.sigmap));
                             fprintf(stdout, "num_batch_committed %d\n", num_batch_committed);
                             fprintf(stdout, "node %d %s %d; input %d %s %d\n", i, type2name[this_type].c_str(), node2batch[i], arg, type2name[that_type].c_str(), node2batch[arg]);
-                            fprintf(stdout, "thisbid: \n");
+                            fprintf(stdout, "thisbid: %d\n", this_sbid);
                             assert(this_sbid >= 0);
                             for (int bid = start_indices[this_sbid]; bid < start_indices[this_sbid + 1]; bid++)
                             {
@@ -609,14 +614,14 @@ namespace dynet
                                 }
                                 fprintf(stdout, "\n");
                             }
-                            fprintf(stdout, "thatbid: \n");
+                            fprintf(stdout, "thatbid: %d\n", that_sbid);
                             assert(that_sbid >= 0);
                             for (int bid = start_indices[that_sbid]; bid < start_indices[that_sbid + 1]; bid++)
                             {
                                 fprintf(stdout, "\tbid %d: ", bid);
                                 for (auto id : batches[bid].ids)
                                 {
-                                    int type = cg.nodes[id]->autobatch_sig(cg, cg.sigmap);
+                                    int type = cg.sigmap.sig2type(cg.nodes[id]->autobatch_sig(cg, cg.sigmap));
                                     fprintf(stdout, "(%d, %s), ", id, type2name[type].c_str());
                                 }
                                 fprintf(stdout, "\n");

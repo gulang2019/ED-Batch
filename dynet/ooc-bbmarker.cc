@@ -15,7 +15,7 @@ namespace dynet
 
     int ComputationGraph::mark_basic_block(int stid)
     {
-        if (autobatch_flag != 7)
+        if (autobatch_flag != 7 || nodes.size() == n_marked_node) 
             return -1;
         if (profiling_flag)
             timer.start("bbmark");
@@ -23,41 +23,16 @@ namespace dynet
         int sid = snodes.size();
         if (stid < 0)
         {
-            int n_unbatchable = 0;
             Trie<BBInfo *> *curr = &head;
             for (int nid = n_marked_node; nid < nodes.size(); nid++)
             {
                 auto node = nodes[nid];
                 int sig = node->autobatch_sig(*this, sigmap);
-                if (sig == 0)
-                {
-                    n_unbatchable++;
-                    assert(!node->args.size());
-                    unbatchable_ops.push_back(nid);
-                    nid2sid.push_back(-1);
-                    continue;
-                }
                 if (curr->next.count(sig) == 0)
                     curr->next[sig] = new Trie<BBInfo *>();
                 curr = curr->next[sig];
                 nid2sid.push_back(sid);
             }
-            if (n_unbatchable == (nodes.size() - n_marked_node))
-            {
-                n_marked_node = nodes.size();
-                if (profiling_flag)
-                    timer.stop("bbmark");
-                return -1;
-            }
-            if (n_unbatchable)
-            {
-                for (int nid = n_marked_node; nid < nodes.size(); nid++)
-                {
-                    fprintf(stdout, "(%s, %d), ", OoC::type2name[sigmap.sig2type(nodes[nid]->autobatch_sig(*this, sigmap))].c_str(), nid);
-                }
-                fprintf(stdout, "\n");
-            }
-            assert(n_unbatchable == 0);
 
             if (!curr->isLeaf)
             {
@@ -69,23 +44,20 @@ namespace dynet
                 stypes.push_back({});
                 vector<int> node2type;
                 vector<vector<int>> node2args;
+                int fake_type = 0;
                 for (int nid = n_marked_node; nid < nodes.size(); nid++)
                 {
                     auto node = nodes[nid];
                     int sig = node->autobatch_sig(*this, sigmap);
-                    node2type.push_back(sig);
+                    node2type.push_back(sig? sig: --fake_type); // for unbatchable ops, give it a unique tid;
                     node2args.push_back({});
-                    int aid = 0;
+                    bool is_input_node = false;
                     for (auto arg : node->args)
                     {
                         node2args.back().push_back(arg - n_marked_node);
-                        int arg_sid = nid2sid[arg];
-                        if (arg_sid >= 0 && arg < n_marked_node)
-                        {
-                            curr->data->pred_pos.push_back({nid - n_marked_node, aid});
-                        }
-                        aid++;
+                        is_input_node =  is_input_node || (arg < n_marked_node);
                     }
+                    if (is_input_node) curr->data->input_nodes.push_back(nid - n_marked_node);
                 }
                 fprintf(stdout, "add pattern %d, %ld\n", stid, node2args.size());
                 stypes.back().pattern = pattern_cache.add_pattern(stid, node2args, node2type);
@@ -122,64 +94,31 @@ namespace dynet
         return sid;
     }
 
-    void ComputationGraph::mark_sum_and_finish()
+    void ComputationGraph::construct_snode_graph()
     {
         if (autobatch_flag != 7)
             return;
-        assert(n_marked_node == nodes.size() - 1);
-        auto node = nodes[n_marked_node];
-        int sig = node->autobatch_sig(*this, sigmap);
-        assert(sigmap.sig2type(sig) == op_type::sum);
-        int sid = snodes.size();
-        snodes.push_back({});
-        nid2sid.push_back(sid);
-        auto &snode = snodes.back();
-        snode.min_nid = n_marked_node;
-        Trie<BBInfo *> *curr = &head;
-        if (curr->next.count(sig) == 0)
-            curr->next[sig] = new Trie<BBInfo *>();
-
-        curr = curr->next[sig];
-        if (!curr->isLeaf)
-        {
-            curr->data = new BBInfo();
-            curr->isLeaf = true;
-            int stid = stypes.size();
-            curr->data->stid = stid;
-            stypes.push_back({});
-            stypes.back().pattern = pattern_cache.add_pattern(stid, {{}}, {sig});
-            fprintf(stdout, "add pattern: sum %d, \n", stypes.back().pattern->nop);
-            stypes.back().pattern->show();
-        }
-        assert(curr->data);
-        int stid = curr->data->stid;
-        snode.type = stid;
-        stypes[stid].cnt++;
-        for (auto arg : node->args)
-        {
-            int arg_sid = nid2sid[arg];
-            assert(arg_sid >= 0);
-            snode.succs.push_back(arg_sid);
-        }
-        n_marked_node = nodes.size();
 
         global_timer.start("synchronize snode");
         vector<future<int>> results;
         int n_thread = std::min(thread::hardware_concurrency(), ((unsigned)snodes.size() + 99) / 100);
-        int n_work = (snodes.size() + n_thread - 2) / n_thread;
+        int n_work = (snodes.size() + n_thread - 1) / n_thread;
         for (int thread_id = 0; thread_id < n_thread; thread_id++)
         {
             results.emplace_back(async([thread_id, this, n_work]
                                        {
             int n_ops = 0;
-            for (int sid = thread_id * n_work; sid < std::min((thread_id+1)*n_work, (int)this->snodes.size()-1); sid++){
+            for (int sid = thread_id * n_work; sid < std::min((thread_id+1)*n_work, (int)this->snodes.size()); sid++){
                 auto & snode = this->snodes[sid];
                 int stid = snode.type;
                 OoC::BBInfo * data = stypes[stid].bbinfo;
-                for (auto &kv : data->pred_pos){
-                    int nid = this->nodes[snode.min_nid + kv.first]->args[kv.second];
-                    int arg_sid = this->nid2sid[nid];
-                    snode.succs.push_back(arg_sid);
+                for (auto i_node_offset : data->input_nodes){
+                    auto node = this->nodes[snode.min_nid + i_node_offset];
+                    for (auto arg: node->args){
+                        if (arg < snode.min_nid) {
+                            snode.succs.push_back(this->nid2sid[arg]);
+                        }
+                    }
                 }
                 n_ops += stid >= this->n_stored_stypes? data->nop:0;
             }
