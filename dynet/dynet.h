@@ -504,7 +504,7 @@ struct ComputationGraph {
   int n_new_ops;
   mode_t schedule_mode = INFERENCE;
   int n_marked_node = 0;
-  std::vector<OoC::supernodeInfo> snodes;
+  std::vector<OoC::supernodeInfo*> snodes;
   std::vector<int> nid2sid;
   std::list<int> unbatchable_ops;
   int mark_basic_block(int stid = -1);

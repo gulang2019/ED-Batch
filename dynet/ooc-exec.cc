@@ -144,20 +144,20 @@ namespace dynet
         {
             auto &snode = cg.snodes[nid];
             fprintf (stdout, "\t[debug] snode[%d].nid = %d\n", nid, num_batch_committed);
-            snode.bid = num_batch_committed;
-            frontierType.pureNodeCnt -= (snode.dirtyInputCnt == 0);
+            snode->bid = num_batch_committed;
+            frontierType.pureNodeCnt -= (snode->dirtyInputCnt == 0);
             int aid = 0;
-            for (auto &succ : snode.succs)
+            for (auto &succ : snode->succs)
             {
                 memory_affinity[succ] = memory_affinity_tag + aid * batch_size;
-                auto &succNode = cg.snodes[succ];
-                if (--succNode.inputCnt == 0)
-                    cg.stypes[succNode.type].frontiers.push_back(succ);
+                auto succNode = cg.snodes[succ];
+                if (--succNode->inputCnt == 0)
+                    cg.stypes[succNode->type].frontiers.push_back(succ);
                 aid++;
             }
             memory_affinity_tag++;
         }
-        memory_affinity_tag += batch_size * (cg.snodes[snode_batch.front()].succs.size() - 1);
+        memory_affinity_tag += batch_size * (cg.snodes[snode_batch.front()]->succs.size() - 1);
 
         Pattern *pattern = frontierType.pattern;
         // execution allocation;
@@ -170,7 +170,7 @@ namespace dynet
             {
                 for (auto snid : snode_batch)
                 {
-                    int nid = cg.snodes[snid].min_nid + id;
+                    int nid = cg.snodes[snid]->min_nid + id;
                     node2batch[nid] = bid;
                     batch.ids.push_back(nid);
                 }
@@ -182,7 +182,7 @@ namespace dynet
             fprintf(stdout, "cg.snodes: ");
             for (auto snode : snode_batch)
             {
-                fprintf(stdout, "(%d, %d), ", snode, cg.snodes[snode].min_nid);
+                fprintf(stdout, "(%d, %d), ", snode, cg.snodes[snode]->min_nid);
             }
             fprintf(stdout, "\n");
             fprintf(stdout, "batch.ids(%d, %d): ", (int)pattern->batch_ids.size(), pattern->n_batch);
@@ -659,7 +659,7 @@ namespace dynet
         file << "digraph " << graphname << "{\n";
         function<string(int)> getName = [&](int sid)
         {
-            return "S" + to_string(sid) + "_" + to_string(cg.snodes[sid].type) + "_" + to_string(cg.snodes[sid].bid);
+            return "S" + to_string(sid) + "_" + to_string(cg.snodes[sid]->type) + "_" + to_string(cg.snodes[sid]->bid);
         };
 
         unordered_map<int, string> bid2color;
@@ -698,7 +698,7 @@ namespace dynet
                     file << "\t[color=\"red\"]";
                 file << endl;
             }
-            int bid = cg.snodes[sid].bid;
+            int bid = cg.snodes[sid]->bid;
             if (bid2color.count(bid) == 0)
             {
                 char tmp[10];
@@ -760,8 +760,8 @@ namespace dynet
         int sid = 0;
         for (auto &snode : cg.snodes)
         {
-            file << snode.type << " " << snode.succs.size() << " ";
-            for (auto succ : snode.succs)
+            file << snode->type << " " << snode->succs.size() << " ";
+            for (auto succ : snode->succs)
                 file << succ << " ";
             file << endl;
         }
@@ -835,12 +835,12 @@ namespace dynet
             while (nid <= upto)
             {
                 int sid = cg.nid2sid[nid];
-                int bid = cg.snodes[sid].bid;
                 if (sid == -1)
                 {
                     nid++;
                     continue;
                 }
+                int bid = cg.snodes[sid]->bid;
                 if (bid2color.count(bid) == 0)
                 {
                     char tmp[10];

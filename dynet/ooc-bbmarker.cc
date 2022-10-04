@@ -1,4 +1,5 @@
 #include "dynet.h"
+#include "dynet/ooc-computation_graph.h"
 #include "timing.h"
 
 using namespace dynet;
@@ -23,6 +24,7 @@ namespace dynet
         int sid = snodes.size();
         if (stid < 0)
         {
+            SuperNode::synchronize();
             Trie<BBInfo *> *curr = &head;
             for (int nid = n_marked_node; nid < nodes.size(); nid++)
             {
@@ -82,10 +84,10 @@ namespace dynet
             assert(data && stid == data->stid);
         }
 
-        snodes.push_back({});
-        auto &snode = snodes.back();
-        snode.min_nid = n_marked_node;
-        snode.type = data->stid;
+        snodes.push_back(new supernodeInfo);
+        auto snode = snodes.back();
+        snode->min_nid = n_marked_node;
+        snode->type = data->stid;
         stypes[data->stid].cnt++;
 
         n_marked_node = nodes.size();
@@ -98,7 +100,13 @@ namespace dynet
     {
         if (autobatch_flag != 7)
             return;
-
+        OoC::SuperNode::synchronize();
+        for (int nid = 0; nid < nodes.size(); ++nid) {
+            if (!nodes[nid]){ 
+                fprintf(stderr, "[construct_snode_graph]: failed %d\n", nid);
+                assert(false);
+            }
+        }
         global_timer.start("synchronize snode");
         vector<future<int>> results;
         int n_thread = std::min(thread::hardware_concurrency(), ((unsigned)snodes.size() + 99) / 100);
@@ -109,14 +117,14 @@ namespace dynet
                                        {
             int n_ops = 0;
             for (int sid = thread_id * n_work; sid < std::min((thread_id+1)*n_work, (int)this->snodes.size()); sid++){
-                auto & snode = this->snodes[sid];
-                int stid = snode.type;
+                auto snode = this->snodes[sid];
+                int stid = snode->type;
                 OoC::BBInfo * data = stypes[stid].bbinfo;
                 for (auto i_node_offset : data->input_nodes){
-                    auto node = this->nodes[snode.min_nid + i_node_offset];
+                    auto node = this->nodes[snode->min_nid + i_node_offset];
                     for (auto arg: node->args){
-                        if (arg < snode.min_nid) {
-                            snode.succs.push_back(this->nid2sid[arg]);
+                        if (arg < snode->min_nid) {
+                            snode->succs.push_back(this->nid2sid[arg]);
                         }
                     }
                 }
@@ -134,11 +142,12 @@ namespace dynet
         int frontier_type_cnt = 0;
         for (int sid = snodes.size()-1; sid >= 0; sid--){  
             auto & snode = snodes[sid]; 
-            if (snode.inputCnt == 0){
-                stypes[snode.type].frontiers.push_back(sid);
+            if (snode->inputCnt == 0){
+                stypes[snode->type].frontiers.push_back(sid);
+                stypes[snode->type].cnt++;
                 frontier_type_cnt += 1;
             }
-            for (auto succ: snode.succs) snodes[succ].inputCnt++;   
+            for (auto succ: snode->succs) snodes[succ]->inputCnt++;   
         }
         global_timer.stop("synchronize snode");
         fprintf(stdout, "[OoC::forward]: frontier_type_cnt: %d\n", frontier_type_cnt);
@@ -152,8 +161,8 @@ namespace dynet
         int sid = 0;
         for (auto &snode : snodes)
         {
-            file << snode.type << " " << snode.succs.size() << " ";
-            for (auto succ : snode.succs)
+            file << snode->type << " " << snode->succs.size() << " ";
+            for (auto succ : snode->succs)
                 file << succ << " ";
             file << endl;
         }

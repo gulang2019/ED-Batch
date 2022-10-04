@@ -15,9 +15,13 @@ namespace OoC
             n_node = 0;
             return ret;
         }
+        static void synchronize();
+        static int n_sync;
 
     private:
         static int n_node;
+        static ThreadPool pool;
+        static std::vector<std::future<int> > results;
         struct log_t{
             int first_time = true;
             dynet::VariableIndex begin, end;
@@ -34,7 +38,7 @@ namespace OoC
     class FakeNode : public dynet::Node
     {
     public:
-        FakeNode(dynet::Node *node) : dynet::Node(*node), _node(node) {}
+        FakeNode(dynet::Node *node, int nid = 0) : dynet::Node(*node), _node(node), _nid(nid) {}
 
         dynet::Dim dim_forward(const std::vector<dynet::Dim> &xs) const
         {
@@ -101,8 +105,13 @@ namespace OoC
             return _node->autobatch_reshape(cg, batch_ids, concat, xs, fx);
         }
 
+        ~FakeNode(){
+            fprintf(stdout, "FakeNode %d detructed\n", _nid);
+        }
+
     private:
         dynet::Node *_node;
         mutable int sig_cache = -1;
+        int _nid;
     };
 } // namespace OoC
