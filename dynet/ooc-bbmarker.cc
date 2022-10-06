@@ -14,75 +14,72 @@ namespace dynet
     Trie<OoC::BBInfo *> ComputationGraph::head;     // static of computation graph
     PatternCache ComputationGraph::pattern_cache;   // static of computation graph
 
-    int ComputationGraph::mark_basic_block(int stid)
+    int ComputationGraph::mark_basic_block(bool sync)
     {
-        if (autobatch_flag != 7 || nodes.size() == n_marked_node) 
+        if (autobatch_flag != 7 || (int)nodes.size() == n_marked_node){
             return -1;
+        }
         if (profiling_flag)
             timer.start("bbmark");
-        BBInfo *data;
+
+        if (sync)
+            SuperNode::synchronize("sync_from_markbb");
         int sid = snodes.size();
-        if (stid < 0)
+        Trie<BBInfo *> *curr = &head;
+        for (int nid = n_marked_node; nid < nodes.size(); nid++)
         {
-            SuperNode::synchronize();
-            Trie<BBInfo *> *curr = &head;
+            auto node = nodes[nid];
+            int sig = node->autobatch_sig(*this, sigmap);
+            if (curr->next.count(sig) == 0)
+                curr->next[sig] = new Trie<BBInfo *>();
+            curr = curr->next[sig];
+            nid2sid.push_back(sid);
+        }
+
+        if (!curr->isLeaf)
+        {
+            curr->data = new BBInfo();
+            curr->isLeaf = true;
+            int stid = stypes.size();
+            curr->data->stid = stid;
+            curr->data->nop = nodes.size() - n_marked_node;
+            stypes.push_back({});
+            vector<int> node2type;
+            vector<vector<int>> node2args;
+            int fake_type = 0;
             for (int nid = n_marked_node; nid < nodes.size(); nid++)
             {
                 auto node = nodes[nid];
                 int sig = node->autobatch_sig(*this, sigmap);
-                if (curr->next.count(sig) == 0)
-                    curr->next[sig] = new Trie<BBInfo *>();
-                curr = curr->next[sig];
-                nid2sid.push_back(sid);
+                node2type.push_back(sig ? sig : --fake_type); // for unbatchable ops, give it a unique tid;
+                node2args.push_back({});
+                bool is_input_node = false;
+                for (auto arg : node->args)
+                {
+                    node2args.back().push_back(arg - n_marked_node);
+                    is_input_node = is_input_node || (arg < n_marked_node);
+                }
+                if (is_input_node)
+                    curr->data->input_nodes.push_back(nid - n_marked_node);
             }
-
-            if (!curr->isLeaf)
+            fprintf(stdout, "add pattern %d, %ld\n", stid, node2args.size());
+            if (node2args.size() > 100) 
+                throw 0;
+            stypes.back().pattern = pattern_cache.add_pattern(stid, node2args, node2type);
+            assert(stypes.back().pattern);
+            stypes.back().bbinfo = curr->data;
+            if (profiling_flag > 1)
             {
-                curr->data = new BBInfo();
-                curr->isLeaf = true;
-                int stid = stypes.size();
-                curr->data->stid = stid;
-                curr->data->nop = nodes.size() - n_marked_node;
-                stypes.push_back({});
-                vector<int> node2type;
-                vector<vector<int>> node2args;
-                int fake_type = 0;
+                fprintf(stdout, "pattern: ");
                 for (int nid = n_marked_node; nid < nodes.size(); nid++)
                 {
-                    auto node = nodes[nid];
-                    int sig = node->autobatch_sig(*this, sigmap);
-                    node2type.push_back(sig? sig: --fake_type); // for unbatchable ops, give it a unique tid;
-                    node2args.push_back({});
-                    bool is_input_node = false;
-                    for (auto arg : node->args)
-                    {
-                        node2args.back().push_back(arg - n_marked_node);
-                        is_input_node =  is_input_node || (arg < n_marked_node);
-                    }
-                    if (is_input_node) curr->data->input_nodes.push_back(nid - n_marked_node);
+                    fprintf(stdout, "%s, ", type2name[sigmap.sig2type(node2type[nid - n_marked_node])].c_str());
                 }
-                fprintf(stdout, "add pattern %d, %ld\n", stid, node2args.size());
-                stypes.back().pattern = pattern_cache.add_pattern(stid, node2args, node2type);
-                assert(stypes.back().pattern);
-                stypes.back().bbinfo = curr->data;
-                if (profiling_flag > 1)
-                {
-                    fprintf(stdout, "pattern: ");
-                    for (int nid = n_marked_node; nid < nodes.size(); nid++)
-                    {
-                        fprintf(stdout, "%s, ", type2name[sigmap.sig2type(node2type[nid - n_marked_node])].c_str());
-                    }
-                    fprintf(stdout, "\n");
-                }
-                fprintf(stdout, "add pattern finished!\n");
+                fprintf(stdout, "\n");
             }
-            data = curr->data;
+            fprintf(stdout, "add pattern finished!\n");
         }
-        else
-        {
-            data = stypes[stid].bbinfo;
-            assert(data && stid == data->stid);
-        }
+        BBInfo* data = curr->data;
 
         snodes.push_back(new supernodeInfo);
         auto snode = snodes.back();
@@ -90,25 +87,23 @@ namespace dynet
         snode->type = data->stid;
         stypes[data->stid].cnt++;
 
+        if (profiling_flag > 1)
+            log.push_back({SEQ_CONSTRUCT, "seq_construct", n_marked_node, nodes.size(), sid, data->stid});
         n_marked_node = nodes.size();
         if (profiling_flag)
             timer.stop("bbmark");
-        return sid;
+        return data->stid;
     }
 
     void ComputationGraph::construct_snode_graph()
     {
         if (autobatch_flag != 7)
             return;
-        OoC::SuperNode::synchronize();
-        for (int nid = 0; nid < nodes.size(); ++nid) {
-            if (!nodes[nid]){ 
-                fprintf(stderr, "[construct_snode_graph]: failed %d\n", nid);
-                assert(false);
-            }
-        }
+        OoC::SuperNode::synchronize("sync_from_snode_construct");
+        if (profiling_flag > 1) 
+            for (auto node: nodes)  assert(node != nullptr);
         global_timer.start("synchronize snode");
-        vector<future<int>> results;
+        vector<future<int> > results;
         int n_thread = std::min(thread::hardware_concurrency(), ((unsigned)snodes.size() + 99) / 100);
         int n_work = (snodes.size() + n_thread - 1) / n_thread;
         for (int thread_id = 0; thread_id < n_thread; thread_id++)
@@ -123,7 +118,7 @@ namespace dynet
                 for (auto i_node_offset : data->input_nodes){
                     auto node = this->nodes[snode->min_nid + i_node_offset];
                     for (auto arg: node->args){
-                        if (arg < snode->min_nid) {
+                        if ((int)arg < snode->min_nid) {
                             snode->succs.push_back(this->nid2sid[arg]);
                         }
                     }
@@ -133,24 +128,29 @@ namespace dynet
             return n_ops; }));
         }
         int n_new_op = 0;
-        for (int thread_id = 0; thread_id < n_thread; thread_id++){
+        for (int thread_id = 0; thread_id < n_thread; thread_id++)
+        {
             n_new_op += results[thread_id].get();
         }
-        if (n_new_op > 1)
+        if (n_new_op > 0)
             schedule_mode = TRAIN;
 
         int frontier_type_cnt = 0;
-        for (int sid = snodes.size()-1; sid >= 0; sid--){  
-            auto & snode = snodes[sid]; 
-            if (snode->inputCnt == 0){
+        for (int sid = snodes.size() - 1; sid >= 0; sid--)
+        {
+            auto &snode = snodes[sid];
+            if (snode->inputCnt == 0)
+            {
                 stypes[snode->type].frontiers.push_back(sid);
                 stypes[snode->type].cnt++;
                 frontier_type_cnt += 1;
             }
-            for (auto succ: snode->succs) snodes[succ]->inputCnt++;   
+            for (auto succ : snode->succs)
+                snodes[succ]->inputCnt++;
         }
         global_timer.stop("synchronize snode");
-        fprintf(stdout, "[OoC::forward]: frontier_type_cnt: %d\n", frontier_type_cnt);
+        fprintf(stdout, "[ComputationGraph::construct_snode_graph]: frontier_type_cnt: %d\n", frontier_type_cnt);
+        show_log();
     }
 
     void ComputationGraph::export_snode_graph(string filename)
@@ -158,7 +158,6 @@ namespace dynet
         ofstream file;
         file.open(filename);
         file << snodes.size() << endl;
-        int sid = 0;
         for (auto &snode : snodes)
         {
             file << snode->type << " " << snode->succs.size() << " ";
@@ -169,4 +168,29 @@ namespace dynet
         file.close();
     }
 
+    void ComputationGraph::show_log(){
+        if (profiling_flag < 2) return;
+        fprintf(stdout, "------------------show log---------------------\n");
+        for (auto& item: log){
+            if (item.type == SYNCHRONIZE){
+                fprintf(stdout, "[%s] nodes %d, result.size() %d\n", 
+                    item.info.c_str(), item.begin, item.end);
+            }
+            else if (item.type == PARA_CONSTRUCT){
+                fprintf(stdout, "[%s] begin %d, end %d, sid %d, stid %d\n",  
+                    item.info.c_str(), item.begin,item.end, item.sid, item.stid);
+            }
+            else if (item.type == SEQ_CONSTRUCT){
+                fprintf(stdout, "[%s] begin %d, end %d, sid %d, stid %d\n",  
+                    item.info.c_str(), item.begin,item.end, item.sid, item.stid);
+            }
+        }
+        fprintf(stdout, "sync happens %d time, %d of %ld is wrapped\n", 
+            SuperNode::n_sync, SuperNode::n_node, nodes.size());
+        fprintf(stdout, "----------------show log end--------------------\n");
+    }
+
 } // namespace dynet
+
+// A1. delay the commit of lookup ; but sync every mark_basic_block;
+// A2. make placeholder for the commited but unbatched ops;

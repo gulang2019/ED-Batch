@@ -32,6 +32,7 @@ struct Conv2D: public Node {
                                  Tensor& fx) const override {
     autobatch_reshape_concatonly(cg, batch_ids, concat, xs, fx);
   }
+  Conv2D(const Conv2D& other):stride(other.stride), is_valid(other.is_valid){}
   DYNET_NODE_DEFINE_DEV_IMPL()
   const std::vector<unsigned> stride;
   const bool is_valid;

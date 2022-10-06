@@ -504,10 +504,26 @@ struct ComputationGraph {
   int n_new_ops;
   mode_t schedule_mode = INFERENCE;
   int n_marked_node = 0;
+  int n_ready_node = 0; // the number of node that is well-constructed
   std::vector<OoC::supernodeInfo*> snodes;
   std::vector<int> nid2sid;
+  enum debug_log_t{
+    SYNCHRONIZE,
+    PARA_CONSTRUCT,
+    SEQ_CONSTRUCT
+  };
+  struct debug_log{
+    debug_log_t type;
+    std::string info;
+    int begin;
+    int end;
+    int sid;
+    int stid;
+  };
+  std::vector<debug_log> log;
   std::list<int> unbatchable_ops;
-  int mark_basic_block(int stid = -1);
+  int mark_basic_block(bool sync = true);
+  void show_log();
   void construct_snode_graph();
   void export_snode_graph(std::string filename);
 
@@ -759,6 +775,12 @@ struct Node {
     else
       return NULL;
   }
+
+  /**
+   * \brief the deep copy constructor
+   * \return a pointer to a deep copy of current node
+   */
+  virtual Node * clone() = 0;
 
   std::vector<VariableIndex> args; /**< Dependency structure */
 

@@ -24,6 +24,7 @@ struct MaxPooling2D: public Node {
     const bool padding_type = true)
       : Node(a), ksize(k), stride(s), is_valid(padding_type) {}
   virtual bool supports_multibatch() const override { return true; }
+  MaxPooling2D(const MaxPooling2D& other):ksize(other.ksize), stride(other.stride), is_valid(other.is_valid){}
   DYNET_NODE_DEFINE_DEV_IMPL()
   const std::vector<unsigned> ksize;
   const std::vector<unsigned> stride;

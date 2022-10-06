@@ -117,7 +117,6 @@ void ComputationGraph::clear() {
 }
 
 VariableIndex ComputationGraph::add_function_node(Node *node, Device *device) {
-  OoC::SuperNode::synchronize();
   VariableIndex new_node_index((VariableIndex)nodes.size());
   nodes.push_back(node);
   if (node->device == nullptr) {
@@ -333,7 +332,6 @@ VariableIndex ComputationGraph::add_const_lookup(LookupParameter p, const std::v
 // factory function should call this right after creating a new node object
 // to set its dimensions properly
 void ComputationGraph::set_dim_for_new_node(const VariableIndex& i) {
-  OoC::SuperNode::synchronize();
   Node* node = nodes[i];
   vector<Dim> xds(node->arity());
   unsigned ai = 0;

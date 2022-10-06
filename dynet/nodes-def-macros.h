@@ -59,6 +59,7 @@ inline std::string print_vecs(const std::vector<std::vector<T> > & vec) {
                 const Tensor& fx, \
                 const Tensor& dEdf, \
                 unsigned i, \
-                Tensor& dEdxi) const;
+                Tensor& dEdxi) const;\
+  Node* clone() override {return new std::remove_reference<decltype(*this)>::type(*this);}
 
 #endif

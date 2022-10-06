@@ -367,7 +367,6 @@ void VanillaLSTMBuilder::new_graph_impl(ComputationGraph& cg, bool update) {
   }
 
   _cg = &cg;
-
   define_bb();
 }
 // layout: 0..layers = c
@@ -476,7 +475,6 @@ Expression VanillaLSTMBuilder::set_s_impl(int prev, const std::vector<Expression
 }
 
 Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
-  _cg->mark_basic_block();
   h.push_back(vector<Expression>(layers));
   c.push_back(vector<Expression>(layers));
   vector<Expression>& ht = h.back();
@@ -509,10 +507,10 @@ Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
     }
     
     vector<Expression> ret;
-    ret = bb_affine->operator()({in, i_c_tm1}, {(int)i, (int)has_prev_state}, true);
+    ret = bb_affine->operator()({in, i_c_tm1}, {(int)i, (int)has_prev_state}, {}, true);
     assert(ret.size() == 1);
     Expression tmp = ret[0];
-    ret = bb_gates->operator()({tmp, i_c_tm1}, {(int)i, (int)has_prev_state}, true);
+    ret = bb_gates->operator()({tmp, i_c_tm1}, {(int)i, (int)has_prev_state}, {}, true);
     assert(ret.size() == 2);
     ct[i] = ret[0];
     in = ht[i] = ret[1];
@@ -1135,8 +1133,7 @@ void CompactVanillaLSTMBuilder::set_weightnoise(float std) {
 void VanillaLSTMBuilder::define_bb()
 {
     bb_affine = new OoC::SuperNode(
-        _cg,
-        [&](const vector<Expression> &inputs, const vector<int> &params, vector<Expression> &outputs)
+        [&](const vector<Expression> &inputs, const vector<int> &params, const vector<int>&runtime_params, vector<Expression> &outputs)
         {
             // assert(params.size() == )
             assert(inputs.size() == 2);
@@ -1164,8 +1161,7 @@ void VanillaLSTMBuilder::define_bb()
         },
         "VanillaLSTM::affine");
     bb_gates = new OoC::SuperNode(
-      _cg,
-      [&](const vector<Expression> &inputs, const vector<int> &params, vector<Expression> &outputs){
+      [&](const vector<Expression> &inputs, const vector<int> &params, const vector<int>&runtime_params, vector<Expression> &outputs){
         assert(inputs.size() == 2);
         assert(params.size() == 2);
         Expression tmp = inputs[0], i_c_tm1 = inputs[1]; // input
