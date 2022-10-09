@@ -63,20 +63,19 @@ namespace dynet
                     curr->data->input_nodes.push_back(nid - n_marked_node);
             }
             fprintf(stdout, "add pattern %d, %ld\n", stid, node2args.size());
+            if (profiling_flag > 1){
+                for (int nid = n_marked_node; nid < nodes.size(); nid++){
+                    auto node = nodes[nid];
+                    fprintf(stdout, "[node %d %s]: %s\n", nid,
+                     type2name[sigmap.sig2type(node->autobatch_sig(*this, sigmap))].c_str(),
+                     node->as_dummy_string().c_str());
+                }   
+            }
             if (node2args.size() > 100) 
                 throw 0;
             stypes.back().pattern = pattern_cache.add_pattern(stid, node2args, node2type);
             assert(stypes.back().pattern);
             stypes.back().bbinfo = curr->data;
-            if (profiling_flag > 1)
-            {
-                fprintf(stdout, "pattern: ");
-                for (int nid = n_marked_node; nid < nodes.size(); nid++)
-                {
-                    fprintf(stdout, "%s, ", type2name[sigmap.sig2type(node2type[nid - n_marked_node])].c_str());
-                }
-                fprintf(stdout, "\n");
-            }
             fprintf(stdout, "add pattern finished!\n");
         }
         BBInfo* data = curr->data;
@@ -132,7 +131,7 @@ namespace dynet
         {
             n_new_op += results[thread_id].get();
         }
-        if (n_new_op > 0)
+        if (n_new_op > 1)
             schedule_mode = TRAIN;
 
         int frontier_type_cnt = 0;
@@ -188,6 +187,15 @@ namespace dynet
         fprintf(stdout, "sync happens %d time, %d of %ld is wrapped\n", 
             SuperNode::n_sync, SuperNode::n_node, nodes.size());
         fprintf(stdout, "----------------show log end--------------------\n");
+    }
+
+    void ComputationGraph::show_nodes(){
+        if (profiling_flag < 2) return;
+        int nid = 0;
+        for (auto node: nodes){
+            fprintf(stdout, "[node %d]: %s\n", nid, node->as_dummy_string().c_str());
+            nid++;
+        }
     }
 
 } // namespace dynet

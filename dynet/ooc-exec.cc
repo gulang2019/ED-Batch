@@ -139,11 +139,9 @@ namespace dynet
         int batch_size = snode_batch.size();
         // frontierType.cnt -= batch_size;
         
-        fprintf (stdout, "begin snode batch %d\n:", num_batch_committed);
         for (auto nid : snode_batch)
         {
             auto &snode = cg.snodes[nid];
-            fprintf (stdout, "\t[debug] snode[%d].nid = %d\n", nid, num_batch_committed);
             snode->bid = num_batch_committed;
             frontierType.pureNodeCnt -= (snode->dirtyInputCnt == 0);
             int aid = 0;
@@ -206,7 +204,6 @@ namespace dynet
         //     execute_batch(batches[bid]);
         // }
         assert(pattern->mem_allocation_order.size() == pattern->n_batch);
-        fprintf(stdout, "[debug]num_batch_commited %d += %d\n", num_batch_committed, pattern->n_batch);
         num_batch_committed += pattern->n_batch;
         return hasUpdate;
     }

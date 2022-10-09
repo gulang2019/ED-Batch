@@ -524,6 +524,7 @@ struct ComputationGraph {
   std::list<int> unbatchable_ops;
   int mark_basic_block(bool sync = true);
   void show_log();
+  void show_nodes();
   void construct_snode_graph();
   void export_snode_graph(std::string filename);
 
