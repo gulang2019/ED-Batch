@@ -331,14 +331,6 @@ Expression concatenate_cols(const std::vector<Expression> &xs) { return detail::
 Expression concatenate(const std::initializer_list<Expression> &xs, unsigned d) { return detail::f<Concatenate>(xs, d); }
 Expression concatenate(const std::vector<Expression> &xs, unsigned d) { return detail::f<Concatenate>(xs, d); }
 
-
-////////////////////////////////////////////////
-// Functions with basic block optimization    //
-////////////////////////////////////////////////
-
-void mark_basic_block(ComputationGraph *cg, const int block_id, const bool is_begin) {
-  return;
-  if (autobatch_flag != 7) return;
-  cg->add_function<BBMark>(block_id, is_begin);}
-
+Expression select(LookupParameter p, const Expression& indices) {return Expression(indices.pg, indices.pg->add_function<SelectNode>({indices.i}, p));}
+Expression argmax_index(const Expression& x) {return Expression(x.pg, x.pg->add_function<ArgmaxIndex>({x.i}, 0));}
 }  // namespace dynet

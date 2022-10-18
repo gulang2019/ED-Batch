@@ -2652,13 +2652,9 @@ Expression vanilla_lstm_c(const Expression& c_tm1, const Expression& gates_t);
 
 Expression vanilla_lstm_h(const Expression& c_t, const Expression& gates_t);
 
-/**
- * \brief a pseudo-node that marks the begin/end of the basic block
- * 
- */
+Expression argmax_index(const Expression& x);
 
-void mark_basic_block(ComputationGraph *cg, const int block_id, const bool is_begin);
-
+Expression select(LookupParameter p, const Expression& indices);
 
 }  // namespace dynet
 

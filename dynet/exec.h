@@ -97,27 +97,24 @@ class BatchedExecutionEngine : public ExecutionEngine {
   // static OoC::PatternCache pattern_cache;
   // static OoC::Trie head;
   // static std::vector<OoC::typeInfo> stypes;
-  static OoC::Scheduler& scheduler;
+  // static OoC::Scheduler& scheduler;
   // static std::vector<OoC::typeInfo> stypes;
   // a sophisticated implementation of OoC's inference stage
   void getBatches(VariableIndex upto, VariableIndex & batch_id);
   OoC::Timer localTimer;
   // std::vector<OoC::supernodeInfo> snodes;
-  void commit_unbatchables(VariableIndex upto);
   void construct_snode_graph_OoC(VariableIndex upto);
-  // void construct_snode_graph_from_bb_OoC(VariableIndex upto);
-  void schedule_snode_graph_OoC();
   
   enum {
     TRAIN,
     INFERENCE
   } schedule_mode;
-  void schedule_snode_graph_rl();
+  void schedule_snode_graph(std::string type);
   // store execution order and do memory allocation
   void memory_allocation(BatchInfo & my_batch);
   void execute_batch(BatchInfo& batch);
   void execution(int upto);
-  bool commit_batch_OoC(int tid);
+  bool commit_batch_OoC(std::vector<int>& batch);
   void forward_OoC(VariableIndex upto);
 
   const Tensor& incremental_forward_no_update(VariableIndex upto,

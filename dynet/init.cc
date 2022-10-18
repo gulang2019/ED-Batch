@@ -150,10 +150,21 @@ DynetParams extract_dynet_params(int& argc,
     else if (startswith(arg, "--o") || 
             startswith(arg, "--output")){
       if (!has_arg(argi, argc, argv)) {
-        throw std::invalid_argument("[dynet] --output expects an argument (store_file)");
+        throw std::invalid_argument("[OoC] --output expects an argument (store_file)");
       } else {
         string a2 = get_arg(argi, argv);
         istringstream c(a2); c >> params.store_file;
+        remove_args(argc, argv, argi, 2);
+      }
+    }
+    
+    else if (startswith(arg, "--a") || 
+            startswith(arg, "--alg")){
+      if (!has_arg(argi, argc, argv)) {
+        throw std::invalid_argument("[OoC] --alg expects an argument (typewise_lb|dynet|tf_fold|rl)");
+      } else {
+        string a2 = get_arg(argi, argv);
+        istringstream c(a2); c >> params.schedule_alg;
         remove_args(argc, argv, argi, 2);
       }
     }
@@ -282,6 +293,7 @@ void initialize(DynetParams& params) {
 
   // store path 
   store_file = params.store_file;
+  schedule_alg = params.schedule_alg;
 #if HAVE_CUDA
   if (default_device->type == DeviceType::GPU) {
     auto default_gpu_device = static_cast<Device_GPU *>(default_device);

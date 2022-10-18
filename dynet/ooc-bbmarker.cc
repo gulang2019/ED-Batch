@@ -19,8 +19,8 @@ namespace dynet
         if (autobatch_flag != 7 || (int)nodes.size() == n_marked_node){
             return -1;
         }
-        if (profiling_flag)
-            timer.start("bbmark");
+
+        global_timer.start("mark_basic_block");
 
         if (sync)
             SuperNode::synchronize("sync_from_markbb");
@@ -86,11 +86,8 @@ namespace dynet
         snode->type = data->stid;
         stypes[data->stid].cnt++;
 
-        if (profiling_flag > 1)
-            log.push_back({SEQ_CONSTRUCT, "seq_construct", n_marked_node, nodes.size(), sid, data->stid});
+        global_timer.stop("mark_basic_block");
         n_marked_node = nodes.size();
-        if (profiling_flag)
-            timer.stop("bbmark");
         return data->stid;
     }
 
@@ -102,38 +99,26 @@ namespace dynet
         if (profiling_flag > 1) 
             for (auto node: nodes)  assert(node != nullptr);
         global_timer.start("synchronize snode");
-        vector<future<int> > results;
-        int n_thread = std::min(thread::hardware_concurrency(), ((unsigned)snodes.size() + 99) / 100);
-        int n_work = (snodes.size() + n_thread - 1) / n_thread;
-        for (int thread_id = 0; thread_id < n_thread; thread_id++)
-        {
-            results.emplace_back(async([thread_id, this, n_work]
-                                       {
-            int n_ops = 0;
-            for (int sid = thread_id * n_work; sid < std::min((thread_id+1)*n_work, (int)this->snodes.size()); sid++){
-                auto snode = this->snodes[sid];
-                int stid = snode->type;
-                OoC::BBInfo * data = stypes[stid].bbinfo;
-                for (auto i_node_offset : data->input_nodes){
-                    auto node = this->nodes[snode->min_nid + i_node_offset];
-                    for (auto arg: node->args){
-                        if ((int)arg < snode->min_nid) {
-                            snode->succs.push_back(this->nid2sid[arg]);
+        global_timer.start("snode launch");
+        for (int sid = 0; sid < snodes.size(); sid++){
+            auto snode = this->snodes[sid];
+            int stid = snode->type;
+            OoC::BBInfo * data = stypes[stid].bbinfo;
+            for (auto i_node_offset : data->input_nodes){
+                auto node = this->nodes[snode->min_nid + i_node_offset];
+                for (auto arg: node->args){
+                    if ((int)arg < snode->min_nid) {
+                        int succ_id = this->nid2sid[arg];
+                        if (find(snode->succs.begin(), snode->succs.end(), succ_id) == snode->succs.end()) {
+                            snode->succs.push_back(succ_id);
                         }
                     }
                 }
-                n_ops += stid >= this->n_stored_stypes? data->nop:0;
             }
-            return n_ops; }));
         }
-        int n_new_op = 0;
-        for (int thread_id = 0; thread_id < n_thread; thread_id++)
-        {
-            n_new_op += results[thread_id].get();
-        }
-        if (n_new_op > 1)
-            schedule_mode = TRAIN;
+        global_timer.stop("snode launch");
 
+        global_timer.start("collect frontiers");
         int frontier_type_cnt = 0;
         for (int sid = snodes.size() - 1; sid >= 0; sid--)
         {
@@ -147,6 +132,7 @@ namespace dynet
             for (auto succ : snode->succs)
                 snodes[succ]->inputCnt++;
         }
+        global_timer.stop("collect frontiers");
         global_timer.stop("synchronize snode");
         fprintf(stdout, "[ComputationGraph::construct_snode_graph]: frontier_type_cnt: %d\n", frontier_type_cnt);
         show_log();
@@ -165,6 +151,88 @@ namespace dynet
             file << endl;
         }
         file.close();
+    }
+
+    void ComputationGraph::export_graph(string filename){
+        ofstream file;
+        file.open(filename);
+        file << nodes.size() << endl;
+        for (auto &node: nodes){
+            file << node->autobatch_sig(*this,sigmap) << " " << node->args.size();
+            for (auto arg: node->args) 
+                file << " " << arg;
+            file << endl;
+        }
+        file.close();
+    }
+
+    void ComputationGraph::export_dot_graph(string filename){
+        ofstream file;
+        file.open(filename);
+        file << "digraph {" << endl;
+        file << "subgraph G0 {\n";
+        {
+            auto get_name = [this](int nid) {
+                return type2name[sigmap.sig2type(nodes[nid]->autobatch_sig
+                    (*this, sigmap))] + "_" + to_string(nid);
+            };
+            unordered_map<int, string> colormap;
+            auto get_color = [&colormap](int type) {
+                if (colormap.count(type) == 0){
+                    char tmp[20];
+                    sprintf(tmp, "#%6x", rand()%0xffffff);
+                    colormap[type] = string(tmp);
+                } 
+                return colormap[type];
+            };
+            for (int nid = 0; nid < nodes.size(); nid++){
+                string name = get_name(nid);
+                string color = get_color(nodes[nid]->autobatch_sig(*this, sigmap));
+                file << name << " [color=\"" << color << "\"];" << endl; 
+                for (auto arg: nodes[nid]->args){
+                    file << get_name(arg) << " -> " << name << ";" << endl;
+                }
+            }
+        }
+        file << "}\n";
+        file << "subgraph G1{\n";
+        {
+            auto get_name = [this](int nid) {
+                return "S" + to_string(nid);
+            };
+            unordered_map<int, string> colormap;
+            auto get_color = [&colormap](int type) {
+                if (colormap.count(type) == 0){
+                    char tmp[20];
+                    sprintf(tmp, "#%6x", rand()%0xffffff);
+                    colormap[type] = string(tmp);
+                } 
+                return colormap[type];
+            };
+            for (int nid = 0; nid < snodes.size(); nid++){
+                string name = get_name(nid);
+                string color = get_color(snodes[nid]->type);
+                file << name << " [color=\"" << color << "\"];" << endl; 
+                for (auto arg: snodes[nid]->succs){
+                    file << get_name(arg) << " -> " << name << ";" << endl;
+                }
+            }
+        }
+        file << "}\n";
+        file << "}\n";
+
+        file.close();
+    }
+
+    void ComputationGraph::print_unbatchables(){
+        fprintf(stdout, "-------------unbatchables--------------\n");
+        for (auto node: nodes){
+            auto type = node->autobatch_sig(*this, sigmap);
+            if (!type) {
+                fprintf(stdout, "%s\n", node->as_dummy_string().c_str());
+            }
+        }
+        fprintf(stdout, "---------------------------------------\n");
     }
 
     void ComputationGraph::show_log(){

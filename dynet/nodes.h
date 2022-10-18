@@ -32,3 +32,5 @@
 #include "dynet/nodes-trig.h"
 #include "dynet/nodes-to-device.h"
 #include "dynet/nodes-lstm.h"
+#include "dynet/nodes-ooc-select.h"
+#include "dynet/nodes-ooc-argmax.h"

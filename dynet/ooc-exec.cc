@@ -126,38 +126,29 @@ namespace dynet
         global_timer.stop("memory allocation");
     }
 
-    bool BatchedExecutionEngine::commit_batch_OoC(int tid)
+    bool BatchedExecutionEngine::commit_batch_OoC(vector<int>& snode_batch)
     {
         start_indices.push_back(num_batch_committed);
 
-        bool hasUpdate = true;
-        auto &frontierType = cg.stypes[tid];
-        vector<int> snode_batch = move(frontierType.frontiers);
-        assert(snode_batch.size());
         sort(snode_batch.begin(), snode_batch.end(), [&](int sid1, int sid2)
              { return memory_affinity[sid1] < memory_affinity[sid2]; });
         int batch_size = snode_batch.size();
-        // frontierType.cnt -= batch_size;
         
         for (auto nid : snode_batch)
         {
             auto &snode = cg.snodes[nid];
             snode->bid = num_batch_committed;
-            frontierType.pureNodeCnt -= (snode->dirtyInputCnt == 0);
             int aid = 0;
-            for (auto &succ : snode->succs)
-            {
+            for (auto &succ : snode->succs){
                 memory_affinity[succ] = memory_affinity_tag + aid * batch_size;
                 auto succNode = cg.snodes[succ];
-                if (--succNode->inputCnt == 0)
-                    cg.stypes[succNode->type].frontiers.push_back(succ);
                 aid++;
             }
             memory_affinity_tag++;
         }
         memory_affinity_tag += batch_size * (cg.snodes[snode_batch.front()]->succs.size() - 1);
 
-        Pattern *pattern = frontierType.pattern;
+        Pattern *pattern = cg.stypes[cg.snodes[snode_batch.front()]->type].pattern;
         // execution allocation;
         int bid = num_batch_committed;
         for (auto &ids : pattern->batch_ids)
@@ -205,58 +196,9 @@ namespace dynet
         // }
         assert(pattern->mem_allocation_order.size() == pattern->n_batch);
         num_batch_committed += pattern->n_batch;
-        return hasUpdate;
+        return true;
     }
 
-    void BatchedExecutionEngine::schedule_snode_graph_OoC()
-    {
-        // (1) prune rule1, rule2 ==> (dfs)
-        bool hasUpdate = true;
-        int useHeuristic = 0;
-
-        while (hasUpdate)
-        {
-            while (hasUpdate)
-            {
-                hasUpdate = false;
-                int frontierTypeCnt = 0, frontierTypeIdx;
-                for (int idx = 0; idx < (int)cg.stypes.size(); idx++)
-                {
-                    auto &type = cg.stypes[idx];
-                    if (type.frontiers.size())
-                    {
-                        ++frontierTypeCnt;
-                        frontierTypeIdx = idx;
-                    }
-                }
-                if (frontierTypeCnt == 1)
-                    hasUpdate = commit_batch_OoC(frontierTypeIdx);
-
-                for (int idx = 0; idx < (int)cg.stypes.size(); idx++)
-                {
-                    auto &type = cg.stypes[idx];
-                    if (type.pureNodeCnt == type.cnt)
-                    {
-                        while (type.cnt)
-                            hasUpdate = commit_batch_OoC(idx);
-                    }
-                }
-            }
-
-            for (int idx = 0; idx < (int)cg.stypes.size(); idx++)
-            {
-                auto &type = cg.stypes[idx];
-                if (type.frontiers.size())
-                {
-                    ++useHeuristic;
-                    hasUpdate = commit_batch_OoC(idx);
-                    break;
-                }
-            }
-        }
-        if (profiling_flag > 2)
-            fprintf(stdout, "[getBatch] use heuristic %d times\n", useHeuristic);
-    }
 
     void BatchedExecutionEngine::execute_batch(BatchInfo &my_batch)
     {
@@ -490,7 +432,6 @@ namespace dynet
                     timer.stop(current_batch_name);
             }
         }
-        // timer.stop("EXT execution");
         assert(num_batches_evaluated == num_batch_committed);
         string graphname = "B7_" + to_string(graph_id);
         visualize(upto, "./pics/" + graphname + ".gv", graphname, &mem_transfer_edges);
@@ -531,12 +472,12 @@ namespace dynet
         // Create the necessary info for batching in the future
         // construct_snode_graph_OoC(upto);
         int old_num_nodes_evaluated = num_nodes_evaluated;
-        if (cg.schedule_mode == INFERENCE)
-            fprintf(stdout, "[OoC::exec]: inference\n");
-        else
-            fprintf(stdout, "[OoC::exec]: train\n");
-        schedule_snode_graph_rl();
-        commit_unbatchables(upto);
+        // if (cg.schedule_mode == INFERENCE)
+        //     fprintf(stdout, "[OoC::exec]: inference\n");
+        // else
+        //     fprintf(stdout, "[OoC::exec]: train\n");
+        fprintf(stdout, "[OoC::exec]: schedule by %s\n", schedule_alg.c_str());
+        schedule_snode_graph(schedule_alg);
         start_indices.push_back(num_batch_committed);
 
         if (profiling_flag > 1)
@@ -708,24 +649,6 @@ namespace dynet
         file << "}\n";
     }
 
-    void BatchedExecutionEngine::commit_unbatchables(VariableIndex upto)
-    {
-        start_indices.push_back(num_batch_committed);
-        list<int> &ops = cg.unbatchable_ops;
-        while (ops.size() && ops.front() <= upto)
-        {
-            int nid = ops.front();
-            Node *node = cg.nodes[nid];
-            node2batch[nid] = num_batch_committed;
-            auto &batch = batches[num_batch_committed];
-            batch.ids.resize(1);
-            batch.ids[0] = nid;
-            memory_allocation(batch);
-            num_batch_committed++;
-            ops.pop_front();
-        }
-    }
-
     void BatchedExecutionEngine::export_graph(VariableIndex upto, string filename)
     {
         // bid n_input inputs
@@ -765,28 +688,28 @@ namespace dynet
         file.close();
     }
 
-    void BatchedExecutionEngine::schedule_snode_graph_rl()
-    {
-        if (cg.schedule_mode == TRAIN)
-        {
-            fprintf(stdout, "[BatchedExecutionEngine::scheduler]: begin training\n");
-            scheduler.train(cg.snodes, cg.stypes);
-            fprintf(stdout, "[BatchedExecutionEngine::scheduler]: after training\n");
+    void BatchedExecutionEngine::schedule_snode_graph(std::string scheduler_type){
+        global_timer.start("scheduling");
+        global_timer.start("scheduling::init");
+        OoC::StaticScheduler * scheduler;
+        if (scheduler_type == "typewise_lb") 
+            scheduler = new OoC::TypewiseLBScheduler(cg.snodes, cg.stypes);
+        else if (scheduler_type == "dynet") 
+            scheduler = new OoC::DynetScheduler(cg.snodes, cg.stypes);
+        else if (scheduler_type == "tffold") 
+            scheduler = new OoC::TFFoldScheduler(cg.snodes, cg.stypes);
+        else if (scheduler_type == "rl")
+            scheduler = new OoC::LearnableScheduler(cg.snodes, cg.stypes);
+        else assert(false);
+        global_timer.stop("scheduling::init");
+        
+        vector<int> batch;
+        while(scheduler->get_next_batch(batch)){
+            commit_batch_OoC(batch);
+            batch.clear();
         }
-        while (true)
-        {
-            set<int> state;
-            for (int stid = 0; stid < cg.stypes.size(); stid++)
-            {
-                if (cg.stypes[stid].frontiers.size())
-                    state.insert(stid);
-            }
-            if (!state.size())
-                break;
-            int act = scheduler.get_action(state);
-            commit_batch_OoC(act);
-        }
-        return;
+        delete scheduler;
+        global_timer.stop("scheduling");
     }
 
     void BatchedExecutionEngine::visualize(int upto, string filename, string graphname, unordered_set<pair<int, int>, hash_pair> *mem_transfer_edges)

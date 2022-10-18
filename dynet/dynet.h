@@ -486,23 +486,15 @@ struct ComputationGraph {
    * \details This ID is incremented by 1 each time a computation graph is
    * created \return graph id
    */
-  unsigned get_id() const { return graph_id; };
-
-  bool check_bb_mark() const;
-  
+  unsigned get_id() const { return graph_id; };  
 
   static SigMap sigmap;
   static std::vector<OoC::typeInfo> stypes;
   static OoC::Trie<OoC::BBInfo*> head;
   static OoC::PatternCache pattern_cache;
 
-  enum mode_t {
-    TRAIN, 
-    INFERENCE
-  };
   int n_stored_stypes;
   int n_new_ops;
-  mode_t schedule_mode = INFERENCE;
   int n_marked_node = 0;
   int n_ready_node = 0; // the number of node that is well-constructed
   std::vector<OoC::supernodeInfo*> snodes;
@@ -521,12 +513,14 @@ struct ComputationGraph {
     int stid;
   };
   std::vector<debug_log> log;
-  std::list<int> unbatchable_ops;
   int mark_basic_block(bool sync = true);
   void show_log();
   void show_nodes();
   void construct_snode_graph();
   void export_snode_graph(std::string filename);
+  void export_graph(std::string filename);
+  void export_dot_graph(std::string filename);
+  void print_unbatchables();
 
   // data
   std::vector<Node*> nodes;  // **stored in topological order**

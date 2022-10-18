@@ -40,17 +40,6 @@ struct ScaleGradient : public Node {
   virtual std::vector<int> autobatch_concat(const ComputationGraph & cg) const override { return std::vector<int>(1, 1); }  
   DYNET_NODE_DEFINE_DEV_IMPL()
   float lambd;
-};  
-
-// insert a node that marks the bisic block 
-struct BBMark: public Node{
-  explicit BBMark(const int block_id_in, const bool is_begin_in): block_id(block_id_in), is_begin(is_begin_in){  }
-  virtual bool supports_multibatch() const override {return true;}
-  virtual int autobatch_sig(const ComputationGraph &cg, SigMap &sm) const override { Sig s(nt::bbmark); return sm.get_idx(s); }
-  virtual std::vector<int> autobatch_concat(const ComputationGraph & cg) const override { return std::vector<int>(1, 1); }  
-  DYNET_NODE_DEFINE_DEV_IMPL()
-  int block_id;
-  bool is_begin;
 };
 
 } // namespace dynet

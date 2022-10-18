@@ -149,36 +149,4 @@ void ScaleGradient::backward_dev_impl(const MyDevice & dev,
 }
 DYNET_NODE_INST_DEV_IMPL(ScaleGradient)
 
-// ***************** BBMark *******************
-
-#ifndef __CUDACC__
-
-string BBMark::as_string(const vector<string>&args_names) const {
-  ostringstream s;
-  s << "basic_block(" << block_id << ", " << is_begin << ")";
-  return s.str();
-}
-
-Dim BBMark::dim_forward(const vector<Dim>& xs) const {
-  return {};
-}
-
-#endif 
-
-template<class MyDevice>
-void BBMark::forward_dev_impl(const MyDevice & dev, const vector<const Tensor*>& xs, Tensor& fx) const {
-  return;
-}
-
-template<class MyDevice>
-void BBMark::backward_dev_impl(const MyDevice & dev,
-                                   const vector<const Tensor*>& xs,
-                                   const Tensor& fx,
-                                   const Tensor& dEdf,
-                                   unsigned i,
-                                   Tensor& dEdxi) const {
-  return;
-}
-DYNET_NODE_INST_DEV_IMPL(BBMark)
-
 }

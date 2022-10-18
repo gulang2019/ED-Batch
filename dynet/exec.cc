@@ -299,8 +299,8 @@ OoC::DynamicBatching BatchedExecutionEngine::db("train", "information_entropy");
 // OoC::Trie BatchedExecutionEngine::head;
 // vector<OoC::typeInfo> BatchedExecutionEngine::stypes;
 // SigMap BatchedExecutionEngine::sigmap;
-OoC::ParallelQLearningModel model;
-OoC::Scheduler& BatchedExecutionEngine::scheduler = model;
+// OoC::ParallelQLearningModel model;
+// OoC::Scheduler& BatchedExecutionEngine::scheduler = model;
 
 int BatchedExecutionEngine::graph_id(0);
 // copies the list of tensors into a single contig tensor (tout).
@@ -1421,10 +1421,8 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
 const Tensor& BatchedExecutionEngine::incremental_forward(VariableIndex i) {
   DYNET_ASSERT(i < cg.nodes.size(), "Out-of-bounds variable access in BatchedExecutionEngine::incremental_forward()");
   
-  global_timer.start("garbage_collect");
   if (num_nodes_evaluated == 0)
     garbage_collect();
-  global_timer.stop("garbage_collect");
 
   if (autobatch_flag > 99) {
     Timing timer;

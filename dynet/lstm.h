@@ -215,6 +215,7 @@ struct VanillaLSTMBuilder : public RNNBuilder {
                               float forget_bias = 1.f);
 
   Expression back() const override { return (cur == -1 ? h0.back() : h[cur].back()); }
+  Expression back_c() const {return c.size() == 0? c0.back():c.back().back();}
   std::vector<Expression> final_h() const override { return (h.size() == 0 ? h0 : h.back()); }
   std::vector<Expression> final_s() const override {
     std::vector<Expression> ret = (c.size() == 0 ? c0 : c.back());
