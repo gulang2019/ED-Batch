@@ -58,6 +58,8 @@ set(dynet_library_SRCS
     nodes-similarities.cc
     nodes-softmaxes.cc
     nodes-to-device.cc
+    nodes-ooc-select.cc 
+    nodes-ooc-argmax.cc
     nodes-trig.cc
     param-init.cc
     param-nodes.cc
@@ -145,6 +147,8 @@ nodes-select.h
 nodes-similarities.h
 nodes-softmaxes.h
 nodes-to-device.h
+nodes-ooc-select.h 
+nodes-ooc-argmax.h
 nodes-trig.h
 param-init.h
 param-nodes.h
@@ -204,6 +208,8 @@ set(dynet_gpu_mergeable_SRCS
     nodes-softmaxes
     nodes-to-device
     nodes-trig
+    nodes-ooc-select 
+    nodes-ooc-argmax
     param-nodes
     tensor
     training
