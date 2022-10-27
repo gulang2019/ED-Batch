@@ -2,8 +2,9 @@
 #include "dynet/devices.h"
 #include "dynet/timing.h"
 #include "dynet/expr.h"
+#include "dynet/nodes.h"
 #include "dynet/param-nodes.h"
-#include "dynet/nodes-functor.h"
+// #include "dynet/nodes-functor.h"
 
 
 #ifdef HAVE_CUDA
@@ -207,7 +208,7 @@ namespace OoC
     Expression Block::operator()(
         dynet::ComputationGraph *cg,
         std::unordered_map<std::string, Expression> expr_inputs,
-        std::initializer_list<unsigned> lookup_index)
+        std::initializer_list<unsigned> runtime_index)
     {
         assert(freezed);
         vector<dynet::VariableIndex> inputs;
@@ -216,11 +217,11 @@ namespace OoC
             assert(expr_inputs.count(id_name.second));
             inputs.push_back(expr_inputs[id_name.second].i);
         }
-        assert(lookup_index.size() == lookup_nodes.size());
-        vector<vector<unsigned>> lookup_indices;
-        for (auto x : lookup_index)
-            lookup_indices.push_back({x});
-        dynet::FunctorNode *node = new dynet::FunctorNode(inputs, lookup_indices, this);
+        assert(runtime_index.size() == runtime_nodes.size());
+        vector<vector<unsigned>> runtime_indices;
+        for (auto x : runtime_index)
+            runtime_indices.push_back({x});
+        dynet::FunctorNode *node = new dynet::FunctorNode(inputs, runtime_indices, this);
         // if (memo_block_type < 0) memo_block_type = node->autobatch_sig(*cg, cg->sigmap);
         // node->_type = memo_block_type;
         Expression out = Expression(cg, cg->add_function_node(node));
@@ -284,7 +285,17 @@ namespace OoC
             return Expression();
         }
         Expression expr = dynet::Expression(this, this->add_lookup(p, 0u));
-        lookup_nodes.push_back(expr.i);
+        runtime_nodes.push_back({expr.i, nt::lookup});
+        return move(expr);
+    }
+
+    Expression Block::pickneglogsoftmax(const Expression& x){
+        if (freezed){
+            DYNET_RUNTIME_ERR("call Block::lookup after freezing");
+            return Expression();
+        }
+        Expression expr = dynet::pickneglogsoftmax(x, (unsigned)0);
+        runtime_nodes.push_back({expr.i, nt::pnls});
         return move(expr);
     }
 
@@ -374,9 +385,6 @@ namespace OoC
             auto node = nodes[nid];
             vector<int> batch_concat = node->autobatch_concat(*this);
             assert(batch_concat.size() == node->args.size());
-            cout << "innode: " << nid << " concat: ";
-            for (auto c: batch_concat) cout << c << ",";
-            cout << endl;
             int idx = 0;
             for (auto arg : node->args)
             {
@@ -406,7 +414,7 @@ namespace OoC
     void Block::forward(
         const vector<const Tensor *> &xs,
         Tensor &fx,
-        const vector<vector<unsigned>> &lookup_indices,
+        const vector<vector<unsigned>> &runtime_indices,
         int batch_size)
     {
         assert(freezed);
@@ -419,6 +427,7 @@ namespace OoC
         {
             nfx_cache[input_nodes[i].first] = *xs[i];
         }
+
         // set nfx for output nodes
         float *ptr = fx.v;
         assert(ptr != nullptr);
@@ -430,13 +439,21 @@ namespace OoC
         }
         
         // set pindices for lookup nodes
-        assert(lookup_nodes.size() == lookup_indices.size());
+        assert(runtime_nodes.size() == runtime_indices.size());
 
-        for (int i = 0; i < lookup_nodes.size(); ++i)
+        for (int i = 0; i < runtime_nodes.size(); ++i)
         {
-            auto node = static_cast<dynet::LookupNode *>(nodes[lookup_nodes[i]]);
-            node->pindex = nullptr;
-            node->pindices = &lookup_indices[i];
+            auto & runtime_node = runtime_nodes[i];
+            if (runtime_node.second == nt::lookup){
+                auto node = static_cast<dynet::LookupNode *>(nodes[runtime_node.first]);
+                node->pindex = nullptr;
+                node->pindices = &runtime_indices[i];
+            }
+            else if (runtime_node.second == nt::pnls){
+                auto node = static_cast<dynet::PickNegLogSoftmax*>(nodes[runtime_node.first]);
+                node->pval = nullptr;
+                node->pvals = &runtime_indices[i];
+            }
         }
 
         for (auto bid: memory_allocation_order){
@@ -453,6 +470,7 @@ namespace OoC
 
     void Block::memory_allocate(BatchInfo &my_batch)
     {
+        global_timer.start("memory allocation");
         auto &batch_ids = my_batch.ids;
         auto &nfx = my_batch.nfx;
         assert(batch_ids.size());
@@ -540,6 +558,7 @@ namespace OoC
             nfx.mem_pool = DeviceMempool::FXS;
             nfx.d = Dim({(unsigned int)tot_main});
         }
+        global_timer.stop("memory allocation");
     }
 
     void Block::execute(BatchInfo &my_batch)
@@ -625,7 +644,9 @@ namespace OoC
             global_timer.stop("memtransfer");
 
             node->autobatch_reshape(*this, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
+            global_timer.start("computation");
             node->forward(my_batch.arg_nfxs, my_batch.nfx);
+            global_timer.stop("computation");
         }
         if (profiling_flag)
             timer.stop(current_batch_name);
@@ -667,8 +688,8 @@ namespace OoC
     void Block::combine_tensors(const std::vector<dynet::VariableIndex> &batch_ids,
                          int aid, dynet::Tensor &tout)
     {
-        global_timer.start("EXT combine tensors");
-        global_timer.start("EXT combine preparation");
+        // global_timer.start("EXT combine tensors");
+        // global_timer.start("EXT combine preparation");
         AlignedMemoryPool *mempool = tout.device->pools[(int)DeviceMempool::FXS];
         // Determine needed memory for tout and get list of nodes corresponding to
         // specified argument.
@@ -681,14 +702,14 @@ namespace OoC
             arg_nodes[i] = nid;
         }
         tout.d = Dim({total_dsize});
-        global_timer.stop("EXT combine preparation");
+        // global_timer.stop("EXT combine preparation");
 
         // allocate memory for tout
-        global_timer.start("EXT combined allocation");
+        // global_timer.start("EXT combined allocation");
         float *dest =
             static_cast<float *>(mempool->allocate(total_dsize * sizeof(float)));
-        global_timer.stop("EXT combined allocation");
-        global_timer.start("EXT prepare args");
+        // global_timer.stop("EXT combined allocation");
+        // global_timer.start("EXT prepare args");
 
 #if HAVE_CUDA
         vector<CopyArgs> locs(batch_ids.size() * 3);
@@ -725,11 +746,11 @@ namespace OoC
             }
             dest += sz; // pointer arith
         }
-        global_timer.stop("EXT prepare args");
+        // global_timer.stop("EXT prepare args");
         if (tout.device->type == DeviceType::GPU)
         {
 #if HAVE_CUDA
-            global_timer.start("EXT idx transfer");
+            // global_timer.start("EXT idx transfer");
             size_t req_sz = batch_ids.size() * 3 * sizeof(CopyArgs);
             void *basemem = mempool->allocate(req_sz);
             float **srcs = static_cast<float **>(basemem);
@@ -740,10 +761,10 @@ namespace OoC
                                        locs.size() * sizeof(CopyArgs),
                                        cudaMemcpyHostToDevice,
                                        static_cast<Device_GPU *>(tout.device)->estream->stream()));
-            global_timer.stop("EXT idx transfer");
-            global_timer.start("EXT memcpy");
+            // global_timer.stop("EXT idx transfer");
+            // global_timer.start("EXT memcpy");
             gpu::parallel_memcpy(batch_ids.size(), max_length, srcs, trgs, lens);
-            global_timer.stop("EXT memcpy");
+            // global_timer.stop("EXT memcpy");
 #endif
         }
         else if (tout.device->type == DeviceType::CPU)
@@ -754,7 +775,7 @@ namespace OoC
         {
             throw std::runtime_error("Bad device type");
         }
-        global_timer.stop("EXT combine tensors");
+        // global_timer.stop("EXT combine tensors");
     }
 
     Block::~Block(){
@@ -842,8 +863,8 @@ namespace OoC
         }
         s << endl;
         s << "one_batch_size: " << one_batch_size << endl;
-        s << "lookups: ";
-        for (auto nid: lookup_nodes) s << nid << ", ";
+        s << "runtime_nodes: ";
+        for (auto kv: runtime_nodes) s << "(" << kv.first << "," << type2name[kv.second] << "), ";
         s << endl;
         s << "mem_combine: " << self_check() << endl;
         s << "-------------------------------------" << endl;

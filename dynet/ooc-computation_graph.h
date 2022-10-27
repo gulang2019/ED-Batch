@@ -86,6 +86,8 @@ namespace OoC
         void finish_input() { n_input = nodes.size(); }
         // get input from an lookup
         dynet::Expression lookup(dynet::LookupParameter p);
+        // pickneglogsoftmax 
+        dynet::Expression pickneglogsoftmax(const dynet::Expression&x);
         // register output operation
         void output(std::initializer_list<dynet::Expression> exprs);
         // complete definition
@@ -111,7 +113,8 @@ namespace OoC
         std::vector<dynet::Dim> output_dims;
         unsigned one_batch_size;
         std::vector<std::pair<int, std::string> > input_nodes;
-        std::vector<int> lookup_nodes;
+        // nodes take runtime parameters as input;
+        std::vector<std::pair<int, dynet::nt::NodeType> > runtime_nodes;
         std::vector<int> autobatch_concat;
 
         static int block_id;

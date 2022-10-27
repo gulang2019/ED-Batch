@@ -279,6 +279,7 @@ namespace dynet
         types.resize(sigmap.size());
         int tid = 0;
         for (auto & t:types){
+            int node_type = sigmap.sig2type(tid);
             t.name = OoC::type2name[sigmap.sig2type(tid)]+to_string(tid);
             ++tid;
         }

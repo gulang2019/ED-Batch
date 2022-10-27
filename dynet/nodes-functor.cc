@@ -74,7 +74,10 @@ Dim FunctorNode::dim_forward(const vector<Dim>& xs) const {
 }
 
 void FunctorNode::forward_impl(const std::vector<const Tensor*>& xs, Tensor& fx) const {
+    global_timer.stop("computation");
+    global_timer.stop("execution");
     block->forward(xs, fx, lookup_indices, batch_size);
+    global_timer.start("execution");
     if (block->output_dims.size() > 1){
         if(offsets.size() != block->output_dims.size() * batch_size){
             fprintf(stdout, "offsets.size() %ld, block->output_dims.size() %ld, batch_size %d\n",
@@ -91,6 +94,7 @@ void FunctorNode::forward_impl(const std::vector<const Tensor*>& xs, Tensor& fx)
             }
         }
     }
+    global_timer.start("computation");
 }
 
 void FunctorNode::backward_impl(const std::vector<const Tensor*>& xs,
