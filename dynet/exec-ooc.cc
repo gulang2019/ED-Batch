@@ -34,7 +34,7 @@ struct typeInfo{
     vector<int> frontiers;
     vector<int> dims;
 };
-
+// output: batch_id, node2size, batches[...].ids
 void BatchedExecutionEngine::getBatches(VariableIndex upto, VariableIndex & batch_id){
     // 1. construct the reverse computation graph and node_hash
     vector<nodeInfo> nodes(upto+1);

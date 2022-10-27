@@ -192,6 +192,25 @@ private:
  *  - \f$W_{*h}\f$ (recurrent connections): Sampled from \f$\mathcal U\left([\sqrt{\frac{6}{4d_h + d_h}}]\right)\f$
  *  - \f$b_{h}\f$ (biases): Set to \f$0\f$ except for \f$d_f\f$ which is set to \f$1\f$ 
  */
+
+struct params_t {
+  unsigned input_dim;
+  unsigned hid;
+  bool ln_lstm;
+  bool has_prev_state;
+  unsigned layer;
+  bool operator==(const params_t & other) const {
+    return (input_dim == other.input_dim) && (hid == other.hid) && (ln_lstm == other.ln_lstm) 
+    && (has_prev_state == other.has_prev_state) && (!ln_lstm || layer == other.layer);
+  }
+};
+struct params_hash{
+  size_t operator()(const params_t & param) const {
+    // input_dim X hid X has_prev_state X (1 + n_layer)
+    return (param.input_dim << 16) + (param.hid << 5) + (param.has_prev_state<<4) + (param.ln_lstm? 0:1+param.layer);
+  }
+};
+
 struct VanillaLSTMBuilder : public RNNBuilder {
   /**
    * @brief Default Constructor
@@ -318,10 +337,12 @@ public:
   bool ln_lstm;
   float forget_bias;
   bool dropout_masks_valid;
+  std::vector<std::vector<std::shared_ptr<OoC::Block> > > blocks;
 
 private:
+  static std::unordered_map<params_t, std::shared_ptr<OoC::Block>, params_hash> bb_gates;
   ComputationGraph* _cg; // Pointer to current cg
-  OoC::SuperNode * bb_affine, *bb_gates;
+  // OoC::SuperNode * bb_affine, *bb_gates;
 };
 
 

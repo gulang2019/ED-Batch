@@ -34,6 +34,7 @@ struct Expression {
   ComputationGraph *pg;
   VariableIndex i;
   unsigned graph_id;
+  int n_output = 1;
 
   Expression() : pg(nullptr), i(0), graph_id(0) {}
 
@@ -91,6 +92,18 @@ struct Expression {
     }
     return pg->get_dimension(i);
   }
+
+  /**
+   * \brief Hack Support for multi-output functor node.
+   * \details Return a Expression refering to each output. 
+   * \return An expression refering to an specific output.
+   */
+  Expression operator[](int offset){
+    assert(offset >= 0 && offset < n_output);
+    if (n_output == 1) return (*this);
+    return Expression(pg, i+offset+1);
+  }
+
 };
 
 /**
@@ -105,6 +118,20 @@ enum GradientMode {
 ////////////////////////////////////////////////
 // Input operations                           //
 ////////////////////////////////////////////////
+
+/**
+ * \ingroup inputoperations
+ * \brief Place Holder
+ * \details Create an expression that represents a inpu.
+ *
+ * \param g Computation graph
+ * \param d Dimention
+ * \param name Name tag
+ * \param device The place device for the input value, default_device by default
+ *
+ * \return An expression representing s
+ */
+Expression placeholder(ComputationGraph * cg, const Dim& d, std::string name, Device * device = dynet::default_device);
 
 /**
  * \ingroup inputoperations

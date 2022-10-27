@@ -97,17 +97,17 @@ struct FL2SGDUpdate {
 struct FBinaryLogLoss {
   DYNET_DEVICE_FUNC inline float operator()(float x, float x_true) const {
     if (x_true == 1.f) {
-      if (x == 0.f) return -1.f * log(DYNET_DEVICE_MIN);
-      return -1.f * log(x);
+      if (x == 0.f) return -1.f * std::log(DYNET_DEVICE_MIN);
+      return -1.f * std::log(x);
     }
     else if (x_true == 0.f) {
-      if (x == 1.f) return -1.f * log(DYNET_DEVICE_MIN);
+      if (x == 1.f) return -1.f * std::log(DYNET_DEVICE_MIN);
       else return (x_true - 1.f) * log1pf(-x);
     }
     else {
-      if (x == 0.f) return -1.f * log(DYNET_DEVICE_MIN);
-      else if (x == 1.f) return -1.f * log(DYNET_DEVICE_MIN);
-      else return -1.f * (x_true * log(x) + (1.f - x_true) * log1pf(-x));
+      if (x == 0.f) return -1.f * std::log(DYNET_DEVICE_MIN);
+      else if (x == 1.f) return -1.f * std::log(DYNET_DEVICE_MIN);
+      else return -1.f * (x_true * std::log(x) + (1.f - x_true) * log1pf(-x));
     }
   }
 };
@@ -147,7 +147,7 @@ struct FELUBackward {
 struct FSILUForward {
   explicit FSILUForward(float beta) : beta(beta) {}
   DYNET_DEVICE_FUNC inline float operator()(float x) const {
-    return x * (0.5 + 0.5 * tanh(beta * x * 0.5));
+    return x * (0.5 + 0.5 * std::tanh(beta * x * 0.5));
   }
   float beta;
 };
@@ -155,7 +155,7 @@ struct FSILUForward {
 struct FSILUBackward {
   explicit FSILUBackward(float beta) : beta(beta) {}
   DYNET_DEVICE_FUNC inline float operator()(float x, float d) const {
-    float l = (0.5 + 0.5 * tanh(beta * x * 0.5));
+    float l = (0.5 + 0.5 * std::tanh(beta * x * 0.5));
     return (l + x * l * (1 - l)) * d;
   }
   float beta;

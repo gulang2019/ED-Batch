@@ -13,9 +13,10 @@ namespace dynet {
 
 string Sum::as_string(const vector<string>& arg_names) const {
   ostringstream s;
-  s << arg_names[0];
-  for (unsigned i = 1; i < arg_names.size(); ++i)
-    s << " + " << arg_names[i];
+  s << "sum(" << arg_names.size() << ")";
+  // s << arg_names[0];
+  // for (unsigned i = 1; i < arg_names.size(); ++i)
+  //   s << " + " << arg_names[i];
   return s.str();
 }
 

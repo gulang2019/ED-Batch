@@ -168,6 +168,17 @@ DynetParams extract_dynet_params(int& argc,
         remove_args(argc, argv, argi, 2);
       }
     }
+    
+    else if (startswith(arg, "--blocked") || 
+            startswith(arg, "-b")){
+      if (!has_arg(argi, argc, argv)) {
+        throw std::invalid_argument("[OoC] --alg expects an argument (0|1)");
+      } else {
+        string a2 = get_arg(argi, argv);
+        istringstream c(a2); c >> params.blocked;
+        remove_args(argc, argv, argi, 2);
+      }
+    }
 
 #if HAVE_CUDA
     else if (startswith(arg, "--dynet-gpus") ||
@@ -294,6 +305,7 @@ void initialize(DynetParams& params) {
   // store path 
   store_file = params.store_file;
   schedule_alg = params.schedule_alg;
+  blocked = params.blocked;
 #if HAVE_CUDA
   if (default_device->type == DeviceType::GPU) {
     auto default_gpu_device = static_cast<Device_GPU *>(default_device);

@@ -20,7 +20,7 @@ namespace dynet {
       COMPLEX,
       affine, matmul, transpose,
       vanilla_lstm_gates, vanilla_lstm_h, vanilla_lstm_c,
-      conv2d
+      conv2d, block, get
     };
   }
 
@@ -202,20 +202,24 @@ struct SigTreeMap {
 
 template <class Sig>
 struct SigHashMap {
-  SigHashMap() { sigs.reserve(50); }
+  SigHashMap() {Sig s; sigs[s.hash] = {s.which, 0};}
   int get_idx(Sig &s) {
-    auto it = sigs.find(s);
-    if(it != sigs.end()) return it->second;
-    sigs.insert(std::make_pair(s, (int)sigs.size()));
-    return sigs.size()-1;
+    if (sigs.count(s.hash) == 0) 
+      sigs[s.hash] = {s.which, sigs.size()};
+    return sigs[s.hash].second;
   }
   int size() { return sigs.size(); }
-  std::unordered_map<Sig, int, SigHasher> sigs;
+  std::unordered_map<int, std::pair<int, int> > sigs;
+  int sig2type (int sig){
+    for (auto& kv: sigs) if (kv.second.second == sig) return kv.second.first;
+    return 0;
+  }
 };
 
 typedef SigHash Sig;
 //typedef SigLinearMap<Sig> SigMap;
 typedef SigLinearSortedMap<Sig> SigMap;
+// typedef SigHashMap<Sig> SigMap;
 
 } // namespace dynet
 

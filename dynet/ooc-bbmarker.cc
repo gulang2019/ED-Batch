@@ -258,14 +258,89 @@ namespace dynet
     }
 
     void ComputationGraph::show_nodes(){
-        if (profiling_flag < 2) return;
+        // if (profiling_flag < 2) return;
         int nid = 0;
         for (auto node: nodes){
-            fprintf(stdout, "[node %d]: %s\n", nid, node->as_dummy_string().c_str());
+            vector<string>args;
+            for (auto arg: node->args) args.push_back(to_string(arg));
+            cout << "[node " << nid << ","<<node->dim << "]: " << node->as_string(args) << endl;
             nid++;
         }
     }
 
+    // OoC's extension to dynet's computation graph
+    void ComputationGraph::gen_cdfg(bool draw, string prefix){
+        vector<int> node_types(nodes.size());
+        int nid = 0;
+        for (auto node: nodes) {
+            node_types[nid++] = node->autobatch_sig(*this, sigmap);
+
+        }
+        types.resize(sigmap.size());
+        int tid = 0;
+        for (auto & t:types){
+            t.name = OoC::type2name[sigmap.sig2type(tid)]+to_string(tid);
+            ++tid;
+        }
+        nid = 0;
+        int n_edge = 0;
+        int n_total = 0;
+        for (auto node: nodes) {
+            auto& type = types[node_types[nid]];
+            type.cnt++;
+            for (auto arg: node->args){
+                int t = node_types[arg];
+                if (find(type.args.begin(), type.args.end(), t) == type.args.end()){ 
+                    n_edge++;
+                    type.args.push_back(t);
+                }
+            }
+            n_total += node->args.size();
+            nid++;
+        }
+        cout << "CG nodes:" << nodes.size() 
+            << ",CG edges:" << n_total 
+            << ",CDFG nodes:" << types.size() 
+            << ",CDFG edges:" << n_edge << endl;
+        
+        tid = 0;
+        for (auto& type: types){
+            cout << type.name << ": " << type.cnt << endl;
+        }
+
+        // use floyd method to find all nodes with self-circle;
+        // (i->j,k) = U_(l \in args(j))(i->l, k-1)
+        bool* reachable = new bool[types.size() * types.size()];
+        memset(reachable, 0, sizeof(bool) * types.size() * types.size());
+        for (int j = 0; j < types.size(); ++j) 
+            for (auto arg: types[j].args) reachable[arg*types.size()+j] = true;
+        for (int k = 0; k < (int)types.size(); k++)
+            for (int i = 0; i < (int)types.size(); i++){
+                for (int j = 0; j < (int)types.size(); j++){
+                    for (auto arg: types[j].args){
+                        reachable[i*types.size()+j] |= reachable[i*types.size()+arg];
+                    }
+                }
+            }
+        for (int i = 0; i < types.size(); i++) types[i].self_reachable = reachable[i*types.size()+i];
+        delete reachable;
+
+        if (draw) {
+            ofstream file;
+            file.open("./pics/"+prefix+".gv");
+            file << "digraph G{" << endl;
+            for (auto type: types) {
+                for (auto arg: type.args) {
+                    file << types[arg].name << "->" << type.name << endl;
+                }
+                if (type.self_reachable) 
+                    file << type.name << "[color=\"red\"]" << endl;
+            }
+            file << "}" << endl;
+            file.close();
+        }
+    }
+    std::vector<ComputationGraph::Type> ComputationGraph::types;
 } // namespace dynet
 
 // A1. delay the commit of lookup ; but sync every mark_basic_block;

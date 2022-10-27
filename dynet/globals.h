@@ -15,6 +15,8 @@ extern NamedTimer timer; // debug timing in executors.
 extern std::string store_file;
 extern OoC::Timer global_timer;
 extern std::string schedule_alg;
+extern bool blocked;
+
 
 } // namespace dynet
 

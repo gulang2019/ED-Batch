@@ -206,8 +206,9 @@ void ParameterNode::forward_dev_impl(const MyDevice & dev, const vector<const Te
 //    fx.v = params->values.v;
 //    return;
 //  }
-  if(params.p != nullptr)
+  if(params.p != nullptr){
     tvec(fx).device(*dev.edevice) = tvec(params.get_storage().values) * params.current_weight_decay();
+  }
   else if(lparams.p != nullptr)
     tvec(fx).device(*dev.edevice) = tvec(lparams.get_storage().all_values) * lparams.current_weight_decay();
   else

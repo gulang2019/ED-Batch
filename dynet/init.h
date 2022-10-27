@@ -30,6 +30,7 @@ struct DynetParams {
   std::vector<int> gpu_mask; /**< List of required GPUs by ids */
   std::string store_file; /** <the file to store profiling results>*/
   std::string schedule_alg = "typewise_lb"; /** <the scheduling alg used on supernode graph*/
+  bool blocked = true; /** <whether enable blocked graph definition */ 
 };
 
 DynetParams extract_dynet_params(int& argc, char**& argv, bool shared_parameters = false);

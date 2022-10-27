@@ -315,6 +315,8 @@ enum { LN_GH, LN_BH, LN_GX, LN_BX, LN_GC, LN_BC};
 
 VanillaLSTMBuilder::VanillaLSTMBuilder() : has_initial_state(false), layers(0), input_dim(0), hid(0), dropout_rate_h(0), ln_lstm(false), forget_bias(1.f), dropout_masks_valid(false) { }
 
+std::unordered_map<params_t, std::shared_ptr<OoC::Block>, params_hash> VanillaLSTMBuilder::bb_gates;
+
 VanillaLSTMBuilder::VanillaLSTMBuilder(unsigned layers,
                                        unsigned input_dim,
                                        unsigned hidden_dim,
@@ -324,8 +326,8 @@ VanillaLSTMBuilder::VanillaLSTMBuilder(unsigned layers,
   local_model = model.add_subcollection("vanilla-lstm-builder");
   for (unsigned i = 0; i < layers; ++i) {
     // i
-    Parameter p_x2i = local_model.add_parameters({hidden_dim * 4, layer_input_dim}, ParameterInitConst(0.1f));
-    Parameter p_h2i = local_model.add_parameters({hidden_dim * 4, hidden_dim}, ParameterInitConst(0.1f));
+    Parameter p_x2i = local_model.add_parameters({hidden_dim * 4, layer_input_dim});
+    Parameter p_h2i = local_model.add_parameters({hidden_dim * 4, hidden_dim});
     //Parameter p_c2i = model.add_parameters({hidden_dim, hidden_dim});
     Parameter p_bi = local_model.add_parameters({hidden_dim * 4}, ParameterInitConst(0.f));
 
@@ -347,6 +349,63 @@ VanillaLSTMBuilder::VanillaLSTMBuilder(unsigned layers,
   }  // layers
   dropout_rate = 0.f;
   dropout_rate_h = 0.f;
+
+  if (blocked) {
+    if (ln_lstm){
+      throw std::runtime_error("not implemented!");
+    }
+    for (bool has_prev_state: {false,true})
+    {
+      blocks.push_back({});
+      for (unsigned layer = 0; layer < layers; layer++){
+        params_t param({input_dim, hidden_dim, ln_lstm, has_prev_state, layer});
+        if (bb_gates.count(param) == 0){
+          bb_gates[param]= make_shared<OoC::Block>("lstm_update"+to_string(bb_gates.size()));
+          OoC::Block& block = *bb_gates[param];
+          vector<Expression> ln_vars;
+          if (ln_lstm){
+            auto& ln_p = ln_params[layer];
+            for (unsigned j = 0; j < ln_p.size(); ++j) { 
+              ln_vars.push_back(const_parameter(block, ln_p[j])); 
+            }
+          }
+          block.finish_params();
+          Expression tmp = block.placeholder({{hid*4}}, "affine");
+          Expression i_c_tm1;
+          if (has_prev_state) i_c_tm1 = block.placeholder({{hid}}, "c_tm1");
+          block.finish_input();
+          Expression i_ait, i_aft, i_aot, i_agt;
+          i_ait = pick_range(tmp, 0, hid);
+          i_aft = pick_range(tmp, hid, hid * 2);
+          i_aot = pick_range(tmp, hid * 2, hid * 3);
+          i_agt = pick_range(tmp, hid * 3, hid * 4);
+          
+          Expression i_it = logistic(i_ait);
+          if (forget_bias != 0.0)
+              tmp = logistic(i_aft + forget_bias);
+          else
+              tmp= logistic(i_aft);
+
+
+          Expression i_ft = tmp;
+          Expression i_ot = logistic(i_aot);
+          Expression i_gt = tanh(i_agt);
+
+          Expression ct =  has_prev_state ? (cmult(i_ft, i_c_tm1) + cmult(i_it, i_gt)) :  cmult(i_it, i_gt);
+          Expression ht;
+          if (ln_lstm) {            
+            ht = cmult(i_ot, tanh(layer_norm(ct, ln_vars[LN_GC], ln_vars[LN_BC])));
+          }
+          else ht = cmult(i_ot, tanh(ct));
+
+          block.output({ht, ct});
+          block.freeze();
+          if (profiling_flag > 1) cout << block.as_string(true);
+        }
+        blocks.back().push_back(bb_gates[param]);
+      }
+    }
+  }
 }
 
 
@@ -367,7 +426,6 @@ void VanillaLSTMBuilder::new_graph_impl(ComputationGraph& cg, bool update) {
   }
 
   _cg = &cg;
-  define_bb();
 }
 // layout: 0..layers = c
 //         layers+1..2*layers = h
@@ -506,22 +564,17 @@ Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
       i_h_tm1 = cmult(i_h_tm1, masks[i][1]);
     }
     
-    vector<Expression> ret;
-    ret = bb_affine->operator()({in, i_c_tm1}, {(int)i, (int)has_prev_state}, {}, true);
-    assert(ret.size() == 1);
-    Expression tmp = ret[0];
-    ret = bb_gates->operator()({tmp, i_c_tm1}, {(int)i, (int)has_prev_state}, {}, true);
-    assert(ret.size() == 2);
-    ct[i] = ret[0];
-    in = ht[i] = ret[1];
+    // vector<Expression> ret;
+    // ret = bb_affine->operator()({in, i_c_tm1}, {(int)i, (int)has_prev_state}, {}, true);
+    // assert(ret.size() == 1);
+    // Expression tmp = ret[0];
+    // ret = bb_gates->operator()({tmp, i_c_tm1}, {(int)i, (int)has_prev_state}, {}, true);
+    // assert(ret.size() == 2);
+    // ct[i] = ret[0];
+    // in = ht[i] = ret[1];
     
-    /*
     // input
     Expression tmp;
-    Expression i_ait;
-    Expression i_aft;
-    Expression i_aot;
-    Expression i_agt;
     if (ln_lstm){
       const vector<Expression>& ln_vars = ln_param_vars[i];
       if (has_prev_state)
@@ -534,30 +587,40 @@ Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
       else
         tmp = affine_transform({vars[_BI], vars[_X2I], in});
     }
-    _cg->mark_basic_block();
-    i_ait = pick_range(tmp, 0, hid);
-    i_aft = pick_range(tmp, hid, hid * 2);
-    i_aot = pick_range(tmp, hid * 2, hid * 3);
-    i_agt = pick_range(tmp, hid * 3, hid * 4);
-    
-    Expression i_it = logistic(i_ait);
-    if (forget_bias != 0.0)
-        tmp = logistic(i_aft + forget_bias);
-    else
-        tmp= logistic(i_aft);
+    if (blocked){
+      Expression o = has_prev_state? blocks[has_prev_state][i]->operator()(_cg, {{"affine", tmp}, {"c_tm1", i_c_tm1}}, {}):
+        blocks[has_prev_state][i]->operator()(_cg, {{"affine", tmp}}, {});
+      in = ht[i] = o[0], ct[i] = o[1];
+    }
+    else {
+      Expression i_ait;
+      Expression i_aft;
+      Expression i_aot;
+      Expression i_agt;
+      _cg->mark_basic_block();
+      i_ait = pick_range(tmp, 0, hid);
+      i_aft = pick_range(tmp, hid, hid * 2);
+      i_aot = pick_range(tmp, hid * 2, hid * 3);
+      i_agt = pick_range(tmp, hid * 3, hid * 4);
+      
+      Expression i_it = logistic(i_ait);
+      if (forget_bias != 0.0)
+          tmp = logistic(i_aft + forget_bias);
+      else
+          tmp= logistic(i_aft);
 
 
-    Expression i_ft = tmp;
-    Expression i_ot = logistic(i_aot);
-    Expression i_gt = tanh(i_agt);
+      Expression i_ft = tmp;
+      Expression i_ot = logistic(i_aot);
+      Expression i_gt = tanh(i_agt);
 
-    ct[i] = has_prev_state ? (cmult(i_ft, i_c_tm1) + cmult(i_it, i_gt)) :  cmult(i_it, i_gt);
-    if (ln_lstm) {
-      const vector<Expression>& ln_vars = ln_param_vars[i];
-      in = ht[i] = cmult(i_ot, tanh(layer_norm(ct[i], ln_vars[LN_GC], ln_vars[LN_BC])));
-    } else
-      in = ht[i] = cmult(i_ot, tanh(ct[i]));
-    */
+      ct[i] = has_prev_state ? (cmult(i_ft, i_c_tm1) + cmult(i_it, i_gt)) :  cmult(i_it, i_gt);
+      if (ln_lstm) {
+        const vector<Expression>& ln_vars = ln_param_vars[i];
+        in = ht[i] = cmult(i_ot, tanh(layer_norm(ct[i], ln_vars[LN_GC], ln_vars[LN_BC])));
+      } else
+        in = ht[i] = cmult(i_ot, tanh(ct[i]));
+    }
   }
   return ht.back();
 }
@@ -1132,6 +1195,7 @@ void CompactVanillaLSTMBuilder::set_weightnoise(float std) {
 
 void VanillaLSTMBuilder::define_bb()
 {
+  /*
     bb_affine = new OoC::SuperNode(
         [&](const vector<Expression> &inputs, const vector<int> &params, const vector<int>&runtime_params, vector<Expression> &outputs)
         {
@@ -1201,6 +1265,46 @@ void VanillaLSTMBuilder::define_bb()
       },
       "vanillalstm::cell"
     );
+    */
+
+  // {
+  //   Expression tmp = inputs[0], i_c_tm1 = inputs[1]; // input
+  //   int i = params[0], has_prev_state = params[1]; // input
+  //   Expression cti, hti; // output
+    
+  //   Expression i_ait;
+  //   Expression i_aft;
+  //   Expression i_aot;
+  //   Expression i_agt;
+    
+  //   i_ait = pick_range(tmp, 0, hid);
+  //   i_aft = pick_range(tmp, hid, hid * 2);
+  //   i_aot = pick_range(tmp, hid * 2, hid * 3);
+  //   i_agt = pick_range(tmp, hid * 3, hid * 4);
+    
+  //   Expression i_it = logistic(i_ait);
+  //   if (forget_bias != 0.0)
+  //       tmp = logistic(i_aft + forget_bias);
+  //   else
+  //       tmp= logistic(i_aft);
+
+
+  //   Expression i_ft = tmp;
+  //   Expression i_ot = logistic(i_aot);
+  //   Expression i_gt = tanh(i_agt);
+
+  //   cti = has_prev_state ? (cmult(i_ft, i_c_tm1) + cmult(i_it, i_gt)) :  cmult(i_it, i_gt);
+  //   if (ln_lstm) {
+  //     const vector<Expression>& ln_vars = ln_param_vars[i];
+  //     hti = cmult(i_ot, tanh(layer_norm(cti, ln_vars[LN_GC], ln_vars[LN_BC])));
+  //   } else
+  //     hti = cmult(i_ot, tanh(cti));
+    
+  //   outputs.push_back(cti);
+  //   outputs.push_back(hti);
+  // }
+
+
 }
 
 

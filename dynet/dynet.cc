@@ -10,7 +10,7 @@
 #include "dynet/expr.h"
 #include "dynet/devices.h"
 #include "dynet/timing.h"
-#include "dynet/ooc-computation_graph.h"
+#include "dynet/nodes-functor.h"
 
 using namespace std;
 
@@ -76,7 +76,7 @@ ComputationGraph::ComputationGraph():n_stored_stypes(stypes.size()){
   }
   if (n_hgs > 0) {
     cerr << "Memory allocator assumes only a single ComputationGraph at a time.\n";
-    throw std::runtime_error("Attempted to create >1 CG");
+    // throw std::runtime_error("Attempted to create >1 CG");
   }
   ++n_hgs;
   immediate_compute = false;
@@ -93,7 +93,20 @@ ComputationGraph::ComputationGraph(bool batched):n_stored_stypes(stypes.size()) 
   }
   if (n_hgs > 0) {
     cerr << "Memory allocator assumes only a single ComputationGraph at a time.\n";
-    throw std::runtime_error("Attempted to create >1 CG");
+    // throw std::runtime_error("Attempted to create >1 CG");
+  }
+  ++n_hgs;
+  immediate_compute = false;
+  check_validity = false;
+  ++n_cumul_hgs;
+  graph_id = n_cumul_hgs;
+}
+
+ComputationGraph::ComputationGraph(dynet::ExecutionEngine* ptr): n_stored_stypes(stypes.size()){
+  ee.reset(ptr);
+  if (n_hgs > 0) {
+    cerr << "Memory allocator assumes only a single ComputationGraph at a time.\n";
+    // throw std::runtime_error("Attempted to create >1 CG");
   }
   ++n_hgs;
   immediate_compute = false;
@@ -113,7 +126,8 @@ void ComputationGraph::clear() {
   for (auto n : nodes) delete n;
   nodes.clear();
 
-  ee->invalidate();
+  if (ee.get() != nullptr)
+    ee->invalidate();
 }
 
 VariableIndex ComputationGraph::add_function_node(Node *node, Device *device) {
@@ -170,6 +184,13 @@ Dim& ComputationGraph::get_dimension(VariableIndex index) const {
 }
 
 
+VariableIndex ComputationGraph::add_placeholder(const Dim& d, std::string name, Device* device){
+  VariableIndex new_node_index(nodes.size());
+  nodes.push_back(new PlaceHolderNode(name));
+  nodes.back()->device = device;
+  nodes.back()->dim = d;
+  return new_node_index;
+}
 
 VariableIndex ComputationGraph::add_input(real s, Device *device) {
   VariableIndex new_node_index(nodes.size());
@@ -487,6 +508,29 @@ void ComputationGraph::print_graphviz() const {
       }
     }
   }
+}
+
+int ComputationGraph::dynamic_batching_lowerbound(){
+   int n_type = sigmap.size();
+  vector<int> depth(nodes.size());
+
+  int ret = 0;
+  for (int j = 0; j < n_type; j++)
+  {
+      int max_depth = 0;
+      for (int i = 0; i < nodes.size(); i++)
+      {
+          auto this_sig = nodes[i]->autobatch_sig(*this, sigmap);
+          depth[i] = (this_sig == j);
+          for (auto arg : nodes[i]->args)
+          {
+              depth[i] = std::max(depth[i], (this_sig == j) + depth[arg]);
+          }
+          max_depth = std::max(max_depth, depth[i]);
+      }
+      ret += max_depth;
+  }
+  return ret;
 }
 
 }  // namespace dynet
