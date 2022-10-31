@@ -1,7 +1,6 @@
-#include "dynet/expr.h"
-
 #include <initializer_list>
 
+#include "dynet/expr.h"
 #include "dynet/nodes.h"
 #include "dynet/devices.h"
 

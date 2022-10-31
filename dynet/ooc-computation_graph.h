@@ -109,8 +109,15 @@ namespace OoC
         // <nid, bid> pair of output node
         int n_input = -1;
         int n_params = -1;
-        std::vector<std::pair<int, int>> output_nodes;
-        std::vector<dynet::Dim> output_dims;
+        struct output_t{
+            dynet::Dim dim;
+            int nid;
+            int bid;
+            bool is_examplar; // the node is the front of the output batches
+            int idx; // the index in user given indices
+        };
+        std::vector<output_t> output_nodes;
+        std::unordered_map<int, int> output_indices;
         unsigned one_batch_size;
         std::vector<std::pair<int, std::string> > input_nodes;
         // nodes take runtime parameters as input;

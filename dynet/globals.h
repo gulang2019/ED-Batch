@@ -16,6 +16,7 @@ extern std::string store_file;
 extern OoC::Timer global_timer;
 extern std::string schedule_alg;
 extern bool blocked;
+extern bool opt_mem;
 
 
 } // namespace dynet

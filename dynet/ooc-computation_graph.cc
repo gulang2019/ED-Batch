@@ -225,16 +225,18 @@ namespace OoC
         // if (memo_block_type < 0) memo_block_type = node->autobatch_sig(*cg, cg->sigmap);
         // node->_type = memo_block_type;
         Expression out = Expression(cg, cg->add_function_node(node));
-        out.n_output = output_dims.size();
-        if (output_dims.size() > 1)
+        out.n_output = output_nodes.size();
+        if (output_nodes.size() > 1)
         {
-            for (int oid = 0; oid < (int)output_dims.size(); oid++)
-            {
+            vector<int> indices(output_nodes.size());
+            for (int oid = 0; oid < (int)output_nodes.size(); ++oid){  
+                indices[output_nodes[oid].idx] = oid; 
                 node->offsets.push_back(make_shared<ptrdiff_t>(0));
-                dynet::GetNode *get_node = new dynet::GetNode({out.i}, output_dims[oid]);
-                // if (memo_get_type < 0) memo_get_type = get_node->autobatch_sig(*cg, cg->sigmap);
-                // get_node->_type = memo_get_type;
-                get_node->offset = node->offsets.back();
+            }
+            for (int oid = 0; oid < (int)output_nodes.size(); oid++)
+            {
+                dynet::GetNode *get_node = new dynet::GetNode({out.i}, output_nodes[oid].dim);
+                get_node->offset = node->offsets[indices[oid]];
                 get_node->is_get = true;
                 cg->add_function_node(get_node);
             }
@@ -271,8 +273,7 @@ namespace OoC
         {
             for (auto kv : input_nodes)
                 assert(expr.i != kv.first);
-            output_nodes.push_back({expr.i, 0});
-            output_dims.push_back(nodes[expr.i]->dim);
+            output_indices[expr.i] = output_indices.size();
             one_batch_size += nodes[expr.i]->dim.size();
         }
     }
@@ -303,7 +304,7 @@ namespace OoC
     {
         assert(n_input >= n_params);
         assert(n_params >= 0);
-        assert(output_nodes.size());
+        assert(output_indices.size());
         freezed = true;
         nfx_cache.resize(nodes.size());
         node2offset.resize(nodes.size());
@@ -320,7 +321,7 @@ namespace OoC
             auto node = nodes[nid];
             int sig = node->autobatch_sig(*this, sigmap);
             assert(sig > 0);
-            node2type.push_back(sig);
+            node2type.push_back(sig + (output_indices.count(nid)? 1e3:0)); // output node should not be batched with non-output nodes;
             node2args.push_back({});
             bool is_innode = false;
             for (auto arg : node->args)
@@ -351,31 +352,42 @@ namespace OoC
 
 
         int bid = n_params;
-        OoC::Pattern *pattern = pattern_cache.add_pattern(id, node2args, node2type);
+        set<int> output_constraint;
+        for (auto & kv: output_indices) output_constraint.insert(kv.first - n_input);
+        cout << "[dynet::opt_mem]: " << opt_mem << endl;
+        OoC::Pattern *pattern = pattern_cache.add_pattern(id, node2args, node2type, {output_constraint}, dynet::opt_mem);
         assert(batches.size() == n_params);
         memory_allocation_order = pattern->mem_allocation_order;
+        for (auto & bid: memory_allocation_order) bid += n_params;
         for (auto &ids : pattern->batch_ids)
         {
+            assert(ids.size());
             batches.push_back({});
             auto &batch = batches.back();
-            bool is_output = false;
+            int output_cnt = 0;
             for (auto id : ids)
             {
                 int nid = id + n_input;
                 batch.ids.push_back(nid);
                 node2batch[nid] = bid;
-                for (auto &output : output_nodes)
-                {
-                    if (output.first == nid)
-                    {
-                        is_output = true;
-                        output.second = bid;
-                    }
+            }
+            ++bid;
+        }
+
+        // find proper memory arangement for output nodes
+        for (auto bid: memory_allocation_order){
+            int output_cnt = 0;
+            for (int i = 0; i < batches[bid].ids.size(); i++){
+                int nid = batches[bid].ids[i];
+                if (output_indices.count(nid)) {
+                    output_cnt ++;
+                    output_nodes.push_back({nodes[nid]->dim, nid, bid, i == 0, output_indices[nid]});
                 }
             }
-            if (is_output)
-                assert(ids.size() == 1);
-            ++bid;
+            // all nodes of ids should be in output nodes 
+            if (!(output_cnt == 0 || output_cnt == batches[bid].ids.size())){
+                throw runtime_error("does not support partial output");
+            }
         }
 
         // generate autobatch_concat
@@ -417,10 +429,12 @@ namespace OoC
         const vector<vector<unsigned>> &runtime_indices,
         int batch_size)
     {
+        
         assert(freezed);
         reset();
         for (int nid = n_params; nid < (int)nodes.size(); nid++)
             nodes[nid]->dim.bd *= batch_size;
+        
         // set nfx for input nodes
         DYNET_ASSERT(xs.size() == input_nodes.size(), "input check error in Block::forward");
         for (size_t i = 0; i < xs.size(); i++)
@@ -432,10 +446,11 @@ namespace OoC
         float *ptr = fx.v;
         assert(ptr != nullptr);
 
-        for (auto& nid_bid : output_nodes)
-        {
-            batches[nid_bid.second].nfx.v = ptr;
-            ptr += nodes[nid_bid.first]->dim.size();
+        for (auto &output: output_nodes) {
+            // todo: fix bug here
+            if (output.is_examplar)
+                batches[output.bid].nfx.v = ptr;
+            ptr += nodes[output.nid]->dim.size();
         }
         
         // set pindices for lookup nodes
@@ -457,7 +472,7 @@ namespace OoC
         }
 
         for (auto bid: memory_allocation_order){
-            memory_allocate(batches[bid + n_params]);
+            memory_allocate(batches[bid]);
         }
 
         for (int bid = n_params; bid < (int)batches.size(); bid++){
@@ -645,6 +660,17 @@ namespace OoC
 
             node->autobatch_reshape(*this, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
             global_timer.start("computation");
+            vector<string> input_dims;
+            int i = 0;
+            for (auto& x: my_batch.arg_nfxs) {
+                ostringstream o;
+                o << x->d;
+                o << my_batch.concat[i++];
+                input_dims.push_back(o.str());
+            }
+            // cout << "[forward] out{";
+            // for (auto id: my_batch.ids) cout << id << ",";
+            // cout << "}" << my_batch.nfx.d << "=" << node->as_string(input_dims) << endl;
             node->forward(my_batch.arg_nfxs, my_batch.nfx);
             global_timer.stop("computation");
         }
@@ -797,7 +823,7 @@ namespace OoC
         int n_combine = 0;
         int idx = 0;
         for (auto & bid: memory_allocation_order) {
-            for (auto id: batches[bid+n_params].ids)
+            for (auto id: batches[bid].ids)
                 memid[id] = idx++;
         }
         for (auto & batch: batches){
@@ -847,7 +873,7 @@ namespace OoC
         s << "batches: ";
         for (auto& bid: memory_allocation_order) {
             s << "[" << bid << "]{";
-            for (auto id: batches[bid + n_params].ids) s << id << ", ";
+            for (auto id: batches[bid].ids) s << id << ", ";
             s << "}, ";
         }
         s << endl;
@@ -856,10 +882,11 @@ namespace OoC
         for (int i = 0; i < input_nodes.size(); i++)
             s << "(" << input_nodes[i].first << "," << input_nodes[i].second << ", " << autobatch_concat[i] << "), ";
         s << endl;
-        s << "output_nodes(nid, bid, dim): ";
-        assert(output_nodes.size() == output_dims.size());
-        for (int i = 0; i < (int) output_nodes.size(); i++){
-            s << "(" << output_nodes[i].first << ", " << output_nodes[i].second << ", " << output_dims[i] << "), ";
+        s << "output_nodes(nid,bid,is_examplar,dim,idx): ";
+        assert(output_nodes.size() == output_indices.size());
+        for (auto & output: output_nodes){
+            s << "(" << output.nid << ", " << output.bid << "," << output.is_examplar << "," 
+                << output.dim << "," << output.idx << "), ";
         }
         s << endl;
         s << "one_batch_size: " << one_batch_size << endl;
@@ -871,12 +898,10 @@ namespace OoC
         return s.str();
     }
 
-
-    
-
 } // namespace OoC
-  /*
-      snode parallel construction;
-      snode construction
-  */
-  // n_marked_node: 2
+
+
+/**
+ * output_indices: <nid, offset_indices>
+ * output_nodes: <nid, bid, user_specified_order>
+*/

@@ -1,4 +1,5 @@
 #include "dynet.h"
+#include "dynet/nodes-functor.h"
 #include "dynet/ooc-computation_graph.h"
 #include "timing.h"
 
@@ -272,15 +273,26 @@ namespace dynet
     void ComputationGraph::gen_cdfg(bool draw, string prefix){
         vector<int> node_types(nodes.size());
         int nid = 0;
+        queue<string> block_names;
         for (auto node: nodes) {
-            node_types[nid++] = node->autobatch_sig(*this, sigmap);
-
+            int old_size = sigmap.size();
+            node_types[nid] = node->autobatch_sig(*this, sigmap);
+            if (old_size != sigmap.size() && sigmap.sig2type(node_types[nid]) == nt::block){
+                block_names.push(static_cast<FunctorNode*>(node)->block->name);
+            }
+            nid++;
         }
         types.resize(sigmap.size());
         int tid = 0;
         for (auto & t:types){
             int node_type = sigmap.sig2type(tid);
-            t.name = OoC::type2name[sigmap.sig2type(tid)]+to_string(tid);
+            t.name = OoC::type2name[node_type];
+            if (node_type == nt::block) {
+                assert(!block_names.empty());
+                t.name = block_names.front();
+                block_names.pop();
+            }
+            t.name += to_string(tid);
             ++tid;
         }
         nid = 0;
@@ -303,11 +315,6 @@ namespace dynet
             << ",CG edges:" << n_total 
             << ",CDFG nodes:" << types.size() 
             << ",CDFG edges:" << n_edge << endl;
-        
-        tid = 0;
-        for (auto& type: types){
-            cout << type.name << ": " << type.cnt << endl;
-        }
 
         // use floyd method to find all nodes with self-circle;
         // (i->j,k) = U_(l \in args(j))(i->l, k-1)

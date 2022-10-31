@@ -101,6 +101,7 @@ class BatchedExecutionEngine : public ExecutionEngine {
   // static std::vector<OoC::typeInfo> stypes;
   // a sophisticated implementation of OoC's inference stage
   void getBatches_typewiseLB(VariableIndex upto, VariableIndex& batch_id);
+  void getBatches_rl(VariableIndex upto, VariableIndex& batch_id);
   void getBatches(VariableIndex upto, VariableIndex & batch_id);
   OoC::Timer localTimer;
   // std::vector<OoC::supernodeInfo> snodes;

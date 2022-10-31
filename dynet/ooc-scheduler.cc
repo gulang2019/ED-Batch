@@ -154,7 +154,7 @@ namespace dynet {
         }
 
 
-        if (profiling_flag > 1 ){
+        if (profiling_flag > 2){
             cout << "*****************batch strategy 8***********" << endl;
             for (VariableIndex bid = num_batches_evaluated; bid < batch_id; bid++){
                 cout << "BID" << bid << "\t:";

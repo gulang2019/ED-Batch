@@ -29,20 +29,21 @@ Dim MatrixMultiply::dim_forward(const vector<Dim>& xs) const {
 int MatrixMultiply::autobatch_sig(const ComputationGraph & cg, SigMap &sm) const {
   // Currently assumes there are two args, and batches with a shared first arg.
   // TODO do we want to treat different dimensions of first/second arg differently?
-  if(dim.bd == 1) {
+  // if(dim.bd == 1) {
     Sig s(nt::matmul);
+    s.add_int(dim.bd);  
     if (sharedA) s.add_node(args[0]);
     else s.add_dim(cg.nodes[args[0]]->dim);
     s.add_dim(cg.nodes[args[1]]->dim);
     return sm.get_idx(s);
-  } else {
-    return 0; // TODO handle the batched case as well? should it differ at all?
-  }
+  // } else {
+  //   return 0; // TODO handle the batched case as well? should it differ at all?
+  // }
 }
 
 std::vector<int> MatrixMultiply::autobatch_concat(const ComputationGraph & cg) const {
   vector<int> ret(args.size(), 0);
-  if (dim.bd == 1) { ret[1] = 1; }
+  if (dim.bd >= 1) { ret[1] = 1; }
   if (!sharedA) ret[0] = 1;
   return ret;
 }

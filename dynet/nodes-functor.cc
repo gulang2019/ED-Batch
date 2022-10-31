@@ -63,13 +63,13 @@ string FunctorNode::as_string(const vector<string>& args) const {
 }
 
 Dim FunctorNode::dim_forward(const vector<Dim>& xs) const {
-    assert(block->output_dims.size());
-    int example_bd = block->output_dims.front().bd;
-    for (auto& dim: block->output_dims){
-        assert(dim.bd == example_bd);
+    assert(block->output_nodes.size());
+    int example_bd = block->output_nodes.front().dim.bd;
+    for (auto& output: block->output_nodes){
+        assert(output.dim.bd == example_bd);
     }  
-    if (block->output_dims.size() == 1) 
-        return block->output_dims.front();
+    if (block->output_nodes.size() == 1) 
+        return block->output_nodes.front().dim;
     return Dim({block->one_batch_size}, example_bd);
 }
 
@@ -78,15 +78,15 @@ void FunctorNode::forward_impl(const std::vector<const Tensor*>& xs, Tensor& fx)
     global_timer.stop("execution");
     block->forward(xs, fx, lookup_indices, batch_size);
     global_timer.start("execution");
-    if (block->output_dims.size() > 1){
-        if(offsets.size() != block->output_dims.size() * batch_size){
-            fprintf(stdout, "offsets.size() %ld, block->output_dims.size() %ld, batch_size %d\n",
-                offsets.size(), block->output_dims.size(), batch_size);
+    if (block->output_nodes.size() > 1){
+        if(offsets.size() != block->output_nodes.size() * batch_size){
+            fprintf(stdout, "offsets.size() %ld, block->output_nodes.size() %ld, batch_size %d\n",
+                offsets.size(), block->output_nodes.size(), batch_size);
             throw std::runtime_error("offsets error");
         }
         ptrdiff_t offset = 0;
-        for (int oid = 0; oid < (int)block->output_dims.size(); oid++){
-            int dim = block->output_dims[oid].size();
+        for (int oid = 0; oid < (int)block->output_nodes.size(); oid++){
+            int dim = block->output_nodes[oid].dim.size();
             for (int b = 0; b < batch_size; b++){
                 assert(offsets[oid*batch_size+b] != nullptr);
                 *offsets[oid*batch_size+b] = offset;

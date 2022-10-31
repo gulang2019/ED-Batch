@@ -565,6 +565,9 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     else if (autobatch_strategy == 8){
       getBatches_typewiseLB(upto, batch_id);
     }
+    else if (autobatch_strategy == 9){
+      getBatches_rl(upto, batch_id);
+    }
     else if (autobatch_strategy >= 5){
       // timer.start("EXT scheduling preparation");
       unordered_map<int, int> depthprofcnt(upto * 3);
@@ -1196,7 +1199,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
         DYNET_ASSERT(visited[i], "scheduling incomplete");
         const Node* node= cg.nodes[i];
         for(auto arg: node->args){
-          assert(node2batch[i] > node2batch[arg]);
+          DYNET_ASSERT(node2batch[i] > node2batch[arg], "dependency failed");
         }
       }
       fprintf(stdout, "dependency test passed!");
@@ -1405,7 +1408,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
       if (profiling_flag) { timer.stop(current_batch_name); }
     }
     // timer.stop("EXT execution");
-    global_timer.start("execution");
+    global_timer.stop("execution");
     string graphname = "B" + to_string(autobatch_strategy) + "_" + to_string(graph_id++);
     visualize(upto, "./pics/" + graphname + ".gv", graphname, &mem_transfer_edges);
     // global_timer.show();

@@ -523,6 +523,7 @@ struct ComputationGraph {
   };
   static std::vector<Type> types;
   void gen_cdfg(bool draw = false, std::string prefix = "cdfg");
+  void gen_snode_cdfg(bool draw = false, std::string prefix = "cdfg");
   enum debug_log_t{
     SYNCHRONIZE,
     PARA_CONSTRUCT,

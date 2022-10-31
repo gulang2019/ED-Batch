@@ -73,10 +73,10 @@ void CwiseSum::forward_dev_impl(const MyDevice & dev, const vector<const Tensor*
     for(; i < fx.d.nd; ++i){
       if(xs[0]->d[i] > xs[1]->d[i]) {
         has_right = true;
-        bcast_right[i] = xs[0]->d[i];
+        bcast_right[i] = xs[0]->d[i] / xs[1]->d[i];
       } else if (xs[0]->d[i] < xs[1]->d[i]) {
         has_left = true;
-        bcast_left[i] = xs[1]->d[i];
+        bcast_left[i] = xs[1]->d[i] / xs[0]->d[i];
       }
     }
     if(xs[0]->d.bd > xs[1]->d.bd) {

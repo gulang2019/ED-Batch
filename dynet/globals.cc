@@ -18,5 +18,5 @@ OoC::Timer global_timer;
 std::string store_file;
 std::string schedule_alg = "typewise_lb";
 bool blocked = true;
-
+bool opt_mem = true;
 }
