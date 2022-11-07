@@ -89,9 +89,21 @@ struct ComputationGraph {
    */
   ComputationGraph();
   ComputationGraph(bool batched);
-  ~ComputationGraph();
+  ComputationGraph(dynet::ExecutionEngine* ee);
+  virtual ~ComputationGraph();
 
   // INPUTS
+   /**
+   * \brief Add placeholder input
+   * \details Serve as input placeholder for block;
+   * The computation graph will never execute this node;
+   *
+   * \param d Dimension
+   * \param name Name tag
+   * \param device The device to place the input value
+   * \return The index of the created variable
+   */
+  VariableIndex add_placeholder(const Dim& d, std::string name, Device* device);
   /**
    * \brief Add scalar input
    * \details The computational network will pull inputs in from the user's data
@@ -499,6 +511,23 @@ struct ComputationGraph {
   int n_ready_node = 0; // the number of node that is well-constructed
   std::vector<OoC::supernodeInfo*> snodes;
   std::vector<int> nid2sid;
+  /**
+   * \brief the typewise lowerbound of the number of kernels 
+   */
+  int dynamic_batching_lowerbound();
+  struct Type {
+    std::string name;
+    std::vector<int> args;
+    bool self_reachable;
+    int cnt = 0;
+  };
+  static std::vector<Type> types;
+  void gen_cdfg(bool draw = false, std::string prefix = "cdfg");
+  void gen_snode_cdfg(bool draw = false, std::string prefix = "cdfg");
+  /**
+   * \brief the batchsize for blocked computationgraph  
+   */
+  int batch_size = 1;
   enum debug_log_t{
     SYNCHRONIZE,
     PARA_CONSTRUCT,
@@ -530,6 +559,7 @@ struct ComputationGraph {
 
   std::unique_ptr<ExecutionEngine> ee;  // handles the execution
 
+  VariableIndex add_function_node(Node *node, Device *device = nullptr);
  private:
   unsigned graph_id;
   // flag of whether to compute immediately for each expression, i.e., an
@@ -538,7 +568,6 @@ struct ComputationGraph {
   // flag of checking Inf/NaN of each layer. Only performing checking when
   // immediate_compute is also set to true.
   bool check_validity;
-  VariableIndex add_function_node(Node *node, Device *device = nullptr);
   void set_dim_for_new_node(const VariableIndex& i);
 
   std::vector<CGCheckpoint> checkpoints;
@@ -786,6 +815,12 @@ struct Node {
   // pointer to the node, or nullptr to inherit device from first input, or
   // default when there is no input
   Device* device;
+
+  // a flag to mark the getNode
+  bool is_get = false;
+
+  // a memo for autobatch_sig 
+  mutable int _type = -1;
 
   // for inplace operations (currently only READ-inplacing)
   /**< Type for the inplace operations: NOPE(non-inplace), READ(no changes to the memory), WRITE(unrecoverable changes possibly) */

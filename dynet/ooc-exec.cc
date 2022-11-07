@@ -723,7 +723,8 @@ namespace dynet
         function<string(int)> getName = [&](int nid)
         {
             auto sig = cg.nodes[nid]->autobatch_sig(cg, cg.sigmap);
-            string ret = OoC::type2name[cg.sigmap.sig2type(sig)] + "_" + to_string(sig) + "_" + to_string(nid);
+            string ret = OoC::type2name[cg.sigmap.sig2type(sig)] + to_string(sig) + "_" + to_string(nid) + "_" + to_string(node2batch[nid]);
+            if (memory_affinity.size()) ret += "_" + to_string(memory_affinity[nid]<0?0:memory_affinity[nid]);
             // if (autobatch_flag == 7 && profiling_flag > 1)
             //     ret += "_" + to_string(node2mem_pos[nid]) + "_" + to_string(cg.nid2sid[nid]);
             return ret;
@@ -746,6 +747,18 @@ namespace dynet
                 file << "]";
                 file << endl;
             }
+        }
+
+
+        unordered_map<int, string> bid2color;
+        for (int nid = num_nodes_evaluated; nid <= upto; nid++){
+            int bid = node2batch[nid];
+            if (bid2color.count(bid) == 0){
+                char tmp[10];
+                sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
+                bid2color[bid] = string(tmp);
+            }
+            file << "\t" << getName(nid) << "\t[color=\"" << bid2color[bid] << "\"];\n";
         }
 
         if (autobatch_flag == 7)
@@ -778,30 +791,6 @@ namespace dynet
         file << "}\n";
         file.close();
         return;
-    }
-
-    int BatchedExecutionEngine::lower_bound()
-    {
-        int n_type = cg.sigmap.size();
-        vector<int> depth(cg.nodes.size());
-
-        int ret = 0;
-        for (int j = 0; j < n_type; j++)
-        {
-            int max_depth = 0;
-            for (int i = 0; i < cg.nodes.size(); i++)
-            {
-                auto this_sig = cg.nodes[i]->autobatch_sig(cg, cg.sigmap);
-                depth[i] = (this_sig == j);
-                for (auto arg : cg.nodes[i]->args)
-                {
-                    depth[i] = max(depth[i], (this_sig == j) + depth[arg]);
-                }
-                max_depth = max(max_depth, depth[i]);
-            }
-            ret += max_depth;
-        }
-        return ret;
     }
 
 } // namespace dynet

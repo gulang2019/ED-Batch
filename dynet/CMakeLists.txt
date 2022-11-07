@@ -10,6 +10,8 @@ set(dynet_library_SRCS
     dynet.cc
     exec.cc
     exec-ooc.cc
+    ooc-scheduler.cc
+    ooc-scheduler-rl.cc
     ooc-exec.cc
     ooc-bbmarker.cc
     ooc-computation_graph.cc
@@ -39,6 +41,7 @@ set(dynet_library_SRCS
     nodes-conv2d.cc
     nodes-dropout.cc
     nodes-flow.cc
+    nodes-functor.cc
     nodes-hinge.cc
     nodes-linalg.cc
     nodes-logsumexp.cc
@@ -127,6 +130,7 @@ nodes-cumulative.h
 nodes-def-macros.h
 nodes-dropout.h
 nodes-flow.h
+nodes-functor.h
 nodes.h
 nodes-hinge.h
 nodes-impl-macros.h

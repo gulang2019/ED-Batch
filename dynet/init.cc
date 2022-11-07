@@ -147,7 +147,7 @@ DynetParams extract_dynet_params(int& argc,
       }
     }
 
-    else if (startswith(arg, "--o") || 
+    else if (startswith(arg, "-o") || 
             startswith(arg, "--output")){
       if (!has_arg(argi, argc, argv)) {
         throw std::invalid_argument("[OoC] --output expects an argument (store_file)");
@@ -158,13 +158,34 @@ DynetParams extract_dynet_params(int& argc,
       }
     }
     
-    else if (startswith(arg, "--a") || 
+    else if (startswith(arg, "-a") || 
             startswith(arg, "--alg")){
       if (!has_arg(argi, argc, argv)) {
         throw std::invalid_argument("[OoC] --alg expects an argument (typewise_lb|dynet|tf_fold|rl)");
       } else {
         string a2 = get_arg(argi, argv);
         istringstream c(a2); c >> params.schedule_alg;
+        remove_args(argc, argv, argi, 2);
+      }
+    }
+    
+    else if (startswith(arg, "--blocked") || 
+            startswith(arg, "-b")){
+      if (!has_arg(argi, argc, argv)) {
+        throw std::invalid_argument("[OoC] --alg expects an argument (0|1)");
+      } else {
+        string a2 = get_arg(argi, argv);
+        istringstream c(a2); c >> params.blocked;
+        remove_args(argc, argv, argi, 2);
+      }
+    }
+    
+    else if (startswith(arg, "--opt_mem")){
+      if (!has_arg(argi, argc, argv)) {
+        throw std::invalid_argument("[OoC] --opt_mem expects an argument (0|1)");
+      } else {
+        string a2 = get_arg(argi, argv);
+        istringstream c(a2); c >> params.opt_mem;
         remove_args(argc, argv, argi, 2);
       }
     }
@@ -294,6 +315,8 @@ void initialize(DynetParams& params) {
   // store path 
   store_file = params.store_file;
   schedule_alg = params.schedule_alg;
+  blocked = params.blocked;
+  opt_mem = params.opt_mem;
 #if HAVE_CUDA
   if (default_device->type == DeviceType::GPU) {
     auto default_gpu_device = static_cast<Device_GPU *>(default_device);

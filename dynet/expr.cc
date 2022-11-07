@@ -1,7 +1,6 @@
-#include "dynet/expr.h"
-
 #include <initializer_list>
 
+#include "dynet/expr.h"
 #include "dynet/nodes.h"
 #include "dynet/devices.h"
 
@@ -15,6 +14,7 @@ std::string Expression::get_device_name() const {
   return pg->nodes[i]->device->name;
 }
 
+Expression placeholder(ComputationGraph* g, const Dim& d, std::string name, Device* device) {return Expression(g, g->add_placeholder(d, name, device)); }
 Expression input(ComputationGraph& g, real s, Device *device) { return Expression(&g, g.add_input(s, device)); }
 Expression input(ComputationGraph& g, const real *ps, Device *device) { return Expression(&g, g.add_input(ps, device)); }
 Expression input(ComputationGraph& g, const Dim& d, const vector<float>& data, Device *device) { return Expression(&g, g.add_input(d, data, device)); }
@@ -56,6 +56,7 @@ Expression random_bernoulli(ComputationGraph& g, const Dim& d, real p, real scal
 Expression random_uniform(ComputationGraph& g, const Dim& d, real left, real right, Device *device) { return Expression(&g, g.add_function<RandomUniform>(device, {}, d, left, right)); }
 Expression random_gumbel(ComputationGraph& g, const Dim& d, real mu, real beta, Device *device) { return Expression(&g, g.add_function<RandomGumbel>(device, {}, d, mu, beta)); }
 
+Expression identity(const Expression&x) {return Expression(x.pg, x.pg->add_function<Identity>({x.i}));}
 Expression nobackprop(const Expression& x) { return Expression(x.pg, x.pg->add_function<NoBackprop>({x.i})); }
 Expression flip_gradient(const Expression& x) { return Expression(x.pg, x.pg->add_function<ScaleGradient>({x.i}, -1.f)); }
 Expression scale_gradient(const Expression& x, float lambd) { return Expression(x.pg, x.pg->add_function<ScaleGradient>({x.i}, lambd)); }

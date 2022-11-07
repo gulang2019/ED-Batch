@@ -34,3 +34,4 @@
 #include "dynet/nodes-lstm.h"
 #include "dynet/nodes-ooc-select.h"
 #include "dynet/nodes-ooc-argmax.h"
+#include "dynet/nodes-functor.h"

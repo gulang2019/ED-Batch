@@ -100,6 +100,8 @@ class BatchedExecutionEngine : public ExecutionEngine {
   // static OoC::Scheduler& scheduler;
   // static std::vector<OoC::typeInfo> stypes;
   // a sophisticated implementation of OoC's inference stage
+  void getBatches_typewiseLB(VariableIndex upto, VariableIndex& batch_id);
+  void getBatches_rl(VariableIndex upto, VariableIndex& batch_id);
   void getBatches(VariableIndex upto, VariableIndex & batch_id);
   OoC::Timer localTimer;
   // std::vector<OoC::supernodeInfo> snodes;
@@ -141,7 +143,6 @@ class BatchedExecutionEngine : public ExecutionEngine {
   // For debug 
   std::vector<int> node2mem_pos;
   // the lower bound on batch numbers;
-  int lower_bound();
   int mem_id; 
   // void visualize_trie();
 
