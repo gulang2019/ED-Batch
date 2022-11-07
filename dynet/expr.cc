@@ -56,6 +56,7 @@ Expression random_bernoulli(ComputationGraph& g, const Dim& d, real p, real scal
 Expression random_uniform(ComputationGraph& g, const Dim& d, real left, real right, Device *device) { return Expression(&g, g.add_function<RandomUniform>(device, {}, d, left, right)); }
 Expression random_gumbel(ComputationGraph& g, const Dim& d, real mu, real beta, Device *device) { return Expression(&g, g.add_function<RandomGumbel>(device, {}, d, mu, beta)); }
 
+Expression identity(const Expression&x) {return Expression(x.pg, x.pg->add_function<Identity>({x.i}));}
 Expression nobackprop(const Expression& x) { return Expression(x.pg, x.pg->add_function<NoBackprop>({x.i})); }
 Expression flip_gradient(const Expression& x) { return Expression(x.pg, x.pg->add_function<ScaleGradient>({x.i}, -1.f)); }
 Expression scale_gradient(const Expression& x, float lambd) { return Expression(x.pg, x.pg->add_function<ScaleGradient>({x.i}, lambd)); }

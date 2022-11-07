@@ -24,7 +24,7 @@ Node* FunctorNode::autobatch_pseudo_node(
     FunctorNode * new_node = new FunctorNode(block);
     new_node->offsets.resize(batch_ids.size() * offsets.size(), nullptr);
     new_node->lookup_indices.resize(lookup_indices.size());
-    new_node->batch_size = batch_ids.size();
+    new_node->batch_size = cg.batch_size * batch_ids.size();
     int bid = 0;
     for (auto id: batch_ids){
         auto node = static_cast<FunctorNode*>(cg.nodes[id]);

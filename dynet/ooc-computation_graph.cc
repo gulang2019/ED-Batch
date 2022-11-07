@@ -4,7 +4,6 @@
 #include "dynet/expr.h"
 #include "dynet/nodes.h"
 #include "dynet/param-nodes.h"
-// #include "dynet/nodes-functor.h"
 
 
 #ifdef HAVE_CUDA
@@ -248,7 +247,7 @@ namespace OoC
     {
         if (freezed)
         {
-            DYNET_RUNTIME_ERR("call Block::lookup after freezing");
+            DYNET_RUNTIME_ERR("call Block::placeholder after freezing");
             return Expression();
         }
         Expression expr = dynet::placeholder(this, d, name);
@@ -264,13 +263,14 @@ namespace OoC
         return move(expr);
     }
 
-    void Block::output(std::initializer_list<dynet::Expression> exprs)
+    void Block::output(const std::vector<dynet::Expression>& exprs)
     {
         if (freezed)
             return;
         one_batch_size = 0u;
         for (auto &expr : exprs)
         {
+            if (nodes[expr.i]->is_get) throw runtime_error("get node should not be in the output position");
             for (auto kv : input_nodes)
                 assert(expr.i != kv.first);
             output_indices[expr.i] = output_indices.size();
@@ -292,7 +292,7 @@ namespace OoC
 
     Expression Block::pickneglogsoftmax(const Expression& x){
         if (freezed){
-            DYNET_RUNTIME_ERR("call Block::lookup after freezing");
+            DYNET_RUNTIME_ERR("call Block::pickneglogsoftmax after freezing");
             return Expression();
         }
         Expression expr = dynet::pickneglogsoftmax(x, (unsigned)0);
@@ -429,8 +429,8 @@ namespace OoC
         const vector<vector<unsigned>> &runtime_indices,
         int batch_size)
     {
-        
         assert(freezed);
+        ComputationGraph::batch_size = batch_size;
         reset();
         for (int nid = n_params; nid < (int)nodes.size(); nid++)
             nodes[nid]->dim.bd *= batch_size;
@@ -489,7 +489,10 @@ namespace OoC
         auto &batch_ids = my_batch.ids;
         auto &nfx = my_batch.nfx;
         assert(batch_ids.size());
-        if (batch_ids.size() == 1)
+        if (nodes[batch_ids.front()]->is_get){
+            // do nothing 
+        }
+        else if (batch_ids.size() == 1)
         {
             VariableIndex curr_node = batch_ids[0];
             const Node *node = nodes[curr_node];
@@ -591,7 +594,20 @@ namespace OoC
             dynet::timer.start(current_batch_name);
         }
 
-        if (my_batch.ids.size() == 1)
+        if (nodes[my_batch.ids.front()]->is_get){
+            for (auto id: my_batch.ids){
+                node2offset[id] = 0;
+                GetNode* node = static_cast<GetNode*> (nodes[id]);
+                const Tensor & bt = batches[node2batch[node->args.front()]].nfx;
+                Tensor & t = nfx_cache[id];
+                t.v = bt.v + *node->offset;
+                t.d = node->dim;
+                t.mem_pool = bt.mem_pool;
+                t.device = bt.device;
+            }
+            my_batch.nfx.v = nullptr;
+        }
+        else if (my_batch.ids.size() == 1)
         {
             VariableIndex nid = my_batch.ids[0];
             Node *node = nodes[nid];
@@ -603,6 +619,15 @@ namespace OoC
                 ++ai;
             }
             global_timer.start("computation");
+            // vector<string> input_dims;
+            // for (auto& x: xs) {
+            //     ostringstream o;
+            //     o << x->d;
+            //     input_dims.push_back(o.str());
+            // }
+            // cout << "[" << name << "::forward] out{";
+            // for (auto id: my_batch.ids) cout << id << ",";
+            // cout << "}" << my_batch.nfx.d << "=" << node->as_string(input_dims) << endl;
             node->forward(xs, my_batch.nfx);
             global_timer.stop("computation");
         }
@@ -650,7 +675,7 @@ namespace OoC
                     else
                     {
                         global_timer.cumint("n_memtransfer", my_batch.ids.size() * nodes[my_batch.ids.front()]->dim.size());
-                        global_timer.cumint("n_combine", 1);
+                        global_timer.cumint("n_combine"+name, 1);
                         combine_tensors(my_batch.ids, i, *my_xsi);
                     }
                     my_batch.arg_nfxs[i] = my_xsi;
@@ -660,15 +685,15 @@ namespace OoC
 
             node->autobatch_reshape(*this, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
             global_timer.start("computation");
-            vector<string> input_dims;
-            int i = 0;
-            for (auto& x: my_batch.arg_nfxs) {
-                ostringstream o;
-                o << x->d;
-                o << my_batch.concat[i++];
-                input_dims.push_back(o.str());
-            }
-            // cout << "[forward] out{";
+            // vector<string> input_dims;
+            // int i = 0;
+            // for (auto& x: my_batch.arg_nfxs) {
+            //     ostringstream o;
+            //     o << x->d;
+            //     o << my_batch.concat[i++];
+            //     input_dims.push_back(o.str());
+            // }
+            // cout << "[" << name << "::forward] out{";
             // for (auto id: my_batch.ids) cout << id << ",";
             // cout << "}" << my_batch.nfx.d << "=" << node->as_string(input_dims) << endl;
             node->forward(my_batch.arg_nfxs, my_batch.nfx);

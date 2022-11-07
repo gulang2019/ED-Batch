@@ -96,7 +96,7 @@ struct Expression {
   /**
    * \brief Hack Support for multi-output functor node.
    * \details Return a Expression refering to each output. 
-   * \return An expression refering to an specific output.
+   * \return An expression refering to a specific output.
    */
   Expression operator[](int offset){
     assert(offset >= 0 && offset < n_output);
@@ -1848,7 +1848,16 @@ Expression poisson_loss(const Expression& x, const unsigned* py);
 ////////////////////////////////////////////////
 // Flow operations                            //
 ////////////////////////////////////////////////
-
+/**
+ * \ingroup  flowoperations
+ * \brief copy node
+ * \details This node perform non-inplace copy. A walk around for partial output of 
+ * functor node.
+ * 
+ * \param x the input expression 
+ * \return the new expression 
+ */
+ Expression identity(const Expression& x);
 /**
  * \ingroup flowoperations
  * \brief Prevent backprop

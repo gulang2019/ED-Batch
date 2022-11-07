@@ -524,6 +524,10 @@ struct ComputationGraph {
   static std::vector<Type> types;
   void gen_cdfg(bool draw = false, std::string prefix = "cdfg");
   void gen_snode_cdfg(bool draw = false, std::string prefix = "cdfg");
+  /**
+   * \brief the batchsize for blocked computationgraph  
+   */
+  int batch_size = 1;
   enum debug_log_t{
     SYNCHRONIZE,
     PARA_CONSTRUCT,

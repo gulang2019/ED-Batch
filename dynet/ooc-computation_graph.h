@@ -89,7 +89,7 @@ namespace OoC
         // pickneglogsoftmax 
         dynet::Expression pickneglogsoftmax(const dynet::Expression&x);
         // register output operation
-        void output(std::initializer_list<dynet::Expression> exprs);
+        void output(const std::vector<dynet::Expression>& exprs);
         // complete definition
         void freeze();
         // batched forward

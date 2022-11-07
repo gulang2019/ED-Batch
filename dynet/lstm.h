@@ -231,7 +231,8 @@ struct VanillaLSTMBuilder : public RNNBuilder {
                               unsigned hidden_dim,
                               ParameterCollection& model,
                               bool ln_lstm = false,
-                              float forget_bias = 1.f);
+                              float forget_bias = 1.f,
+                              bool blocked = dynet::blocked);
 
   Expression back() const override { return (cur == -1 ? h0.back() : h[cur].back()); }
   Expression back_c() const {return c.size() == 0? c0.back():c.back().back();}
@@ -338,6 +339,8 @@ public:
   float forget_bias;
   bool dropout_masks_valid;
   std::vector<std::vector<std::shared_ptr<OoC::Block> > > blocks;
+  // whether use blocked construction
+  bool blocked;
 
 private:
   static std::unordered_map<params_t, std::shared_ptr<OoC::Block>, params_hash> bb_gates;

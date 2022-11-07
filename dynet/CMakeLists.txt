@@ -11,6 +11,7 @@ set(dynet_library_SRCS
     exec.cc
     exec-ooc.cc
     ooc-scheduler.cc
+    ooc-scheduler-rl.cc
     ooc-exec.cc
     ooc-bbmarker.cc
     ooc-computation_graph.cc
