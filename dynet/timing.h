@@ -39,10 +39,10 @@ struct Timing {
 class NamedTimer {
 public:
   ~NamedTimer() { 
-    // if (timers.size()>0) {
-    //   std::cout << "Timing Info:" << std::endl;
-    //   show();
-    // }
+    if (timers.size()>0) {
+      std::cout << "Timing Info:" << std::endl;
+      show();
+    }
   }
   
   void clear() {

@@ -1,4 +1,5 @@
 #include "OoC.h"
+#include "ext-pqtree.h"
 
 #include "dynet/exec.h"
 #include "dynet/param-nodes.h"
@@ -6,6 +7,7 @@
 #include "dynet/timing.h"
 #include "dynet/devices.h"
 #include "dynet/nodes-flow.h"
+#include "dynet/globals.h"
 
 using namespace std;
 using namespace OoC;
@@ -126,20 +128,21 @@ namespace dynet
         global_timer.stop("memory allocation");
     }
 
-    bool BatchedExecutionEngine::commit_batch_OoC(vector<int>& snode_batch)
+    bool BatchedExecutionEngine::commit_batch_OoC(vector<int> &snode_batch)
     {
         start_indices.push_back(num_batch_committed);
 
         sort(snode_batch.begin(), snode_batch.end(), [&](int sid1, int sid2)
              { return memory_affinity[sid1] < memory_affinity[sid2]; });
         int batch_size = snode_batch.size();
-        
+
         for (auto nid : snode_batch)
         {
             auto &snode = cg.snodes[nid];
             snode->bid = num_batch_committed;
             int aid = 0;
-            for (auto &succ : snode->succs){
+            for (auto &succ : snode->succs)
+            {
                 memory_affinity[succ] = memory_affinity_tag + aid * batch_size;
                 auto succNode = cg.snodes[succ];
                 aid++;
@@ -148,7 +151,7 @@ namespace dynet
         }
         memory_affinity_tag += batch_size * (cg.snodes[snode_batch.front()]->succs.size() - 1);
 
-        Pattern *pattern = cg.stypes[cg.snodes[snode_batch.front()]->type].pattern;
+        OoC::Pattern *pattern = cg.stypes[cg.snodes[snode_batch.front()]->type].pattern;
         // execution allocation;
         int bid = num_batch_committed;
         for (auto &ids : pattern->batch_ids)
@@ -198,7 +201,6 @@ namespace dynet
         num_batch_committed += pattern->n_batch;
         return true;
     }
-
 
     void BatchedExecutionEngine::execute_batch(BatchInfo &my_batch)
     {
@@ -483,7 +485,8 @@ namespace dynet
         if (profiling_flag > 1)
         {
             fprintf(stdout, "start_indices: ");
-            for (size_t i = 0; i < start_indices.size(); i++){
+            for (size_t i = 0; i < start_indices.size(); i++)
+            {
                 fprintf(stdout, "(%ld, %d), ", i, start_indices[i]);
             }
             fprintf(stdout, "\n");
@@ -688,23 +691,26 @@ namespace dynet
         file.close();
     }
 
-    void BatchedExecutionEngine::schedule_snode_graph(std::string scheduler_type){
+    void BatchedExecutionEngine::schedule_snode_graph(std::string scheduler_type)
+    {
         global_timer.start("scheduling");
         global_timer.start("scheduling::init");
-        OoC::StaticScheduler * scheduler;
-        if (scheduler_type == "typewise_lb") 
+        OoC::StaticScheduler *scheduler;
+        if (scheduler_type == "typewise_lb")
             scheduler = new OoC::TypewiseLBScheduler(cg.snodes, cg.stypes);
-        else if (scheduler_type == "dynet") 
+        else if (scheduler_type == "dynet")
             scheduler = new OoC::DynetScheduler(cg.snodes, cg.stypes);
-        else if (scheduler_type == "tffold") 
+        else if (scheduler_type == "tffold")
             scheduler = new OoC::TFFoldScheduler(cg.snodes, cg.stypes);
         else if (scheduler_type == "rl")
             scheduler = new OoC::LearnableScheduler(cg.snodes, cg.stypes);
-        else assert(false);
+        else
+            assert(false);
         global_timer.stop("scheduling::init");
-        
+
         vector<int> batch;
-        while(scheduler->get_next_batch(batch)){
+        while (scheduler->get_next_batch(batch))
+        {
             commit_batch_OoC(batch);
             batch.clear();
         }
@@ -724,7 +730,8 @@ namespace dynet
         {
             auto sig = cg.nodes[nid]->autobatch_sig(cg, cg.sigmap);
             string ret = OoC::type2name[cg.sigmap.sig2type(sig)] + to_string(sig) + "_" + to_string(nid) + "_" + to_string(node2batch[nid]);
-            if (memory_affinity.size()) ret += "_" + to_string(memory_affinity[nid]<0?0:memory_affinity[nid]);
+            if (memory_affinity.size())
+                ret += "_" + to_string(memory_affinity[nid] < 0 ? 0 : memory_affinity[nid]);
             // if (autobatch_flag == 7 && profiling_flag > 1)
             //     ret += "_" + to_string(node2mem_pos[nid]) + "_" + to_string(cg.nid2sid[nid]);
             return ret;
@@ -749,11 +756,12 @@ namespace dynet
             }
         }
 
-
         unordered_map<int, string> bid2color;
-        for (int nid = num_nodes_evaluated; nid <= upto; nid++){
+        for (int nid = num_nodes_evaluated; nid <= upto; nid++)
+        {
             int bid = node2batch[nid];
-            if (bid2color.count(bid) == 0){
+            if (bid2color.count(bid) == 0)
+            {
                 char tmp[10];
                 sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
                 bid2color[bid] = string(tmp);
@@ -791,6 +799,102 @@ namespace dynet
         file << "}\n";
         file.close();
         return;
+    }
+
+    void BatchedExecutionEngine::pre_malloc(VariableIndex batch_id)
+    {
+        if (!do_pre_malloc) return;
+
+        global_timer.start("pre_alloc");
+
+        std::vector<std::vector<std::vector<int>>> patterns;
+
+        for (VariableIndex bid = num_batches_evaluated; bid < batch_id; ++bid)
+        {
+            auto &batch = batches[bid];
+            int n_arg = cg.nodes[batch.ids.front()]->args.size();
+            for (int aid = 0; aid < n_arg; ++aid)
+            {    
+                std::vector<std::vector<int>> pattern;
+                pattern.push_back({});
+                for (auto id: batch.ids) pattern.back().push_back(id);
+                pattern.push_back({});
+                for (auto nid : batch.ids)
+                    pattern.back().push_back(cg.nodes[nid]->args[aid]);
+                patterns.push_back(move(pattern));
+            }
+        }
+
+        list<int> mem_order;
+
+        if (do_pre_malloc == 1){
+            IsoPQTree tree((int)cg.nodes.size());
+            // sort(patterns.begin(), patterns.end(), [](const std::vector<std::vector<int>> &p1, std::vector<std::vector<int>> &p2)
+            //  { return p1.front().size() < p2.front().size(); });
+            bool succ = tree.IsoReduceAll(patterns);
+            if (!succ) cerr << "[WARNING]: memory allocation not complete." << endl;
+            mem_order = tree.Frontier();
+        }
+        else if (do_pre_malloc == 2){
+            for (VariableIndex bid = num_batches_evaluated; bid < batch_id; ++bid){
+                for (auto id: batches[bid].ids){
+                    mem_order.push_back(id);
+                }
+            }
+        }
+
+        vector<size_t> offsets(mem_order.size());
+
+        size_t memsize = 0;
+        int bid = -1;
+        std::vector<VariableIndex>::iterator batch_iter;
+        std::vector<size_t>::iterator offset_iter = offsets.begin();
+        for (auto nid : mem_order)
+        {
+            if (pre_allocated[nid])
+                continue;
+            auto node = cg.nodes[nid];
+            if (!node->is_function){ // do not allocate memory for function node
+                *offset_iter++ = memsize;
+                memsize += node2size[nid];
+            }
+            if (node2batch[nid] != bid)
+            {
+                assert(bid < 0 || batch_iter == batches[bid].ids.end());
+                bid = node2batch[nid];
+                batch_iter = batches[bid].ids.begin();
+            }
+            *batch_iter++ = nid;
+        }
+
+        auto mempool = cg.nodes.front()->device->pools[(int)DeviceMempool::FXS];
+        float *base;
+        if (do_pre_malloc == 1 || do_pre_malloc == 2)
+            base = (float*)mempool->allocate(memsize * sizeof(float));
+
+        bid = -1;
+        offset_iter = offsets.begin();
+        for (auto nid : mem_order)
+        {
+            if (pre_allocated[nid] || cg.nodes[nid]->is_function)
+                continue;
+            if (do_pre_malloc == 3 && node2batch[nid] != bid){
+                bid = node2batch[nid];
+                size_t memsize = 0;
+                for (auto id: batches[bid].ids) memsize += node2size[id];
+                base = (float*) mempool->allocate(memsize * sizeof(float)) 
+                    - *offset_iter;
+            }
+            auto &t = nfx_cache[nid];
+            auto node = cg.nodes[nid];
+            t.v = base + *offset_iter++;
+            t.d = node->dim;
+            t.mem_pool = DeviceMempool::FXS;
+            t.device = node->device;
+            pre_allocated[nid] = true;
+        }
+
+        global_timer.stop("pre_alloc");
     }
 
 } // namespace dynet

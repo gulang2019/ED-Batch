@@ -95,7 +95,7 @@ namespace OoC
         // batched forward
         void forward(
             const std::vector<const dynet::Tensor *> &xs,
-            dynet::Tensor &fx,
+            std::vector<dynet::Tensor*>& ys,
             const std::vector<std::vector<unsigned>> &lookup_indices,
             int batch_size);
         dynet::Expression operator()(
@@ -113,7 +113,6 @@ namespace OoC
             dynet::Dim dim;
             int nid;
             int bid;
-            bool is_examplar; // the node is the front of the output batches
             int idx; // the index in user given indices
         };
         std::vector<output_t> output_nodes;
@@ -139,8 +138,8 @@ namespace OoC
 
         const dynet::Tensor &get_nfx(dynet::VariableIndex i);
         bool guaranteed_contig;
-        void memory_allocate(BatchInfo &batch);
-        void execute(BatchInfo &batch);
+        void memory_allocate(int bid);
+        void execute(int bid);
         void reset();
         void combine_tensors(const std::vector<dynet::VariableIndex> &batch_ids,
                              int aid, dynet::Tensor &tout);

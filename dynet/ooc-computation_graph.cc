@@ -5,7 +5,6 @@
 #include "dynet/nodes.h"
 #include "dynet/param-nodes.h"
 
-
 #ifdef HAVE_CUDA
 #include "dynet/gpu-ops.h"
 #endif
@@ -221,24 +220,29 @@ namespace OoC
         for (auto x : runtime_index)
             runtime_indices.push_back({x});
         dynet::FunctorNode *node = new dynet::FunctorNode(inputs, runtime_indices, this);
+        node->is_function = true;
+        node->n_output = output_nodes.size();
         // if (memo_block_type < 0) memo_block_type = node->autobatch_sig(*cg, cg->sigmap);
         // node->_type = memo_block_type;
-        Expression out = Expression(cg, cg->add_function_node(node));
-        out.n_output = output_nodes.size();
-        if (output_nodes.size() > 1)
+        VariableIndex nid = cg->add_function_node(node);
+        for (int oid = 0; oid < (int)output_nodes.size(); oid++)
         {
-            vector<int> indices(output_nodes.size());
-            for (int oid = 0; oid < (int)output_nodes.size(); ++oid){  
-                indices[output_nodes[oid].idx] = oid; 
-                node->offsets.push_back(make_shared<ptrdiff_t>(0));
-            }
-            for (int oid = 0; oid < (int)output_nodes.size(); oid++)
-            {
-                dynet::GetNode *get_node = new dynet::GetNode({out.i}, output_nodes[oid].dim);
-                get_node->offset = node->offsets[indices[oid]];
-                get_node->is_get = true;
-                cg->add_function_node(get_node);
-            }
+            dynet::GetNode *get_node = new dynet::GetNode({nid}, output_nodes[oid].dim);
+            get_node->is_get = true;
+            get_node->index = oid;
+            cg->add_function_node(get_node);
+        }
+
+        Expression out;
+        // if there is only one output, we use the get expression to avoid necessary operator[]
+        if (output_nodes.size() == 1)
+        {
+            out = Expression(cg, nid + 1);
+        }
+        else
+        {
+            out = Expression(cg, nid);
+            out.n_output = output_nodes.size();
         }
         return out;
     }
@@ -263,14 +267,15 @@ namespace OoC
         return move(expr);
     }
 
-    void Block::output(const std::vector<dynet::Expression>& exprs)
+    void Block::output(const std::vector<dynet::Expression> &exprs)
     {
         if (freezed)
             return;
         one_batch_size = 0u;
         for (auto &expr : exprs)
         {
-            if (nodes[expr.i]->is_get) throw runtime_error("get node should not be in the output position");
+            if (nodes[expr.i]->is_function)
+                throw runtime_error("function should not be in the output position");
             for (auto kv : input_nodes)
                 assert(expr.i != kv.first);
             output_indices[expr.i] = output_indices.size();
@@ -290,8 +295,10 @@ namespace OoC
         return move(expr);
     }
 
-    Expression Block::pickneglogsoftmax(const Expression& x){
-        if (freezed){
+    Expression Block::pickneglogsoftmax(const Expression &x)
+    {
+        if (freezed)
+        {
             DYNET_RUNTIME_ERR("call Block::pickneglogsoftmax after freezing");
             return Expression();
         }
@@ -321,7 +328,8 @@ namespace OoC
             auto node = nodes[nid];
             int sig = node->autobatch_sig(*this, sigmap);
             assert(sig > 0);
-            node2type.push_back(sig + (output_indices.count(nid)? 1e3:0)); // output node should not be batched with non-output nodes;
+            // output node is executed singlly.
+            node2type.push_back(sig + (output_indices.count(nid) ? 1e3 * (output_indices[nid] + 1) : 0));
             node2args.push_back({});
             bool is_innode = false;
             for (auto arg : node->args)
@@ -333,32 +341,33 @@ namespace OoC
                 in_nodes.push_back(nid);
         }
 
-
         // execute the parameter nodes;
-        for (int nid = 0; nid < n_params; ++nid) {
+        for (int nid = 0; nid < n_params; ++nid)
+        {
             batches.push_back({});
-            auto& my_batch = batches.back();
+            auto &my_batch = batches.back();
             my_batch.ids.resize(1, nid);
-            auto param_node = static_cast<ParameterNode*> (nodes[nid]);
+            auto param_node = static_cast<ParameterNode *>(nodes[nid]);
             assert(param_node && param_node->params.p != nullptr);
             my_batch.nfx = param_node->params.get_storage().values;
             // my_batch.nfx.v = nullptr;
             nfx_cache[nid].v = nullptr;
             node2batch[nid] = nid;
-            node2offset[nid] = 0;    
+            node2offset[nid] = 0;
             // memory_allocate(my_batch);
             // execute(my_batch);
         }
 
-
         int bid = n_params;
         set<int> output_constraint;
-        for (auto & kv: output_indices) output_constraint.insert(kv.first - n_input);
+        for (auto &kv : output_indices)
+            output_constraint.insert(kv.first - n_input);
         cout << "[dynet::opt_mem]: " << opt_mem << endl;
         OoC::Pattern *pattern = pattern_cache.add_pattern(id, node2args, node2type, {output_constraint}, dynet::opt_mem);
         assert(batches.size() == n_params);
         memory_allocation_order = pattern->mem_allocation_order;
-        for (auto & bid: memory_allocation_order) bid += n_params;
+        for (auto &bid : memory_allocation_order)
+            bid += n_params;
         for (auto &ids : pattern->batch_ids)
         {
             assert(ids.size());
@@ -375,20 +384,26 @@ namespace OoC
         }
 
         // find proper memory arangement for output nodes
-        for (auto bid: memory_allocation_order){
+        for (auto bid : memory_allocation_order)
+        {
             int output_cnt = 0;
-            for (int i = 0; i < batches[bid].ids.size(); i++){
+            for (int i = 0; i < batches[bid].ids.size(); i++)
+            {
                 int nid = batches[bid].ids[i];
-                if (output_indices.count(nid)) {
-                    output_cnt ++;
-                    output_nodes.push_back({nodes[nid]->dim, nid, bid, i == 0, output_indices[nid]});
+                if (output_indices.count(nid))
+                {
+                    output_cnt++;
+                    output_nodes.push_back({nodes[nid]->dim, nid, bid, output_indices[nid]});
                 }
             }
-            // all nodes of ids should be in output nodes 
-            if (!(output_cnt == 0 || output_cnt == batches[bid].ids.size())){
+            // all nodes of ids should be in output nodes
+            if (!(output_cnt == 0 || 1 == batches[bid].ids.size()))
+            {
                 throw runtime_error("does not support partial output");
             }
         }
+        sort(output_nodes.begin(), output_nodes.end(), [](const output_t &o1, const output_t &o2)
+             { return o1.idx < o2.idx; });
 
         // generate autobatch_concat
         vector<int> concat(n_input, -1);
@@ -400,15 +415,17 @@ namespace OoC
             int idx = 0;
             for (auto arg : node->args)
             {
-                if (arg < n_input){
-                    if (concat[arg] >= 0) assert(concat[arg] == batch_concat[idx]);
+                if (arg < n_input)
+                {
+                    if (concat[arg] >= 0)
+                        assert(concat[arg] == batch_concat[idx]);
                     concat[arg] = batch_concat[idx];
                 }
                 idx++;
             }
         }
         assert(autobatch_concat.size() == 0);
-        for (auto&kv : input_nodes)
+        for (auto &kv : input_nodes)
         {
             assert(concat[kv.first] != -1);
             autobatch_concat.push_back(concat[kv.first]);
@@ -419,13 +436,13 @@ namespace OoC
     {
         for (int bid = n_params; bid < (int)batches.size(); ++bid)
             batches[bid].nfx.v = nullptr;
-        for (int nid = n_params; nid < (int) nodes.size(); ++nid)
+        for (int nid = n_params; nid < (int)nodes.size(); ++nid)
             nfx_cache[nid].v = nullptr;
     }
 
     void Block::forward(
         const vector<const Tensor *> &xs,
-        Tensor &fx,
+        vector<Tensor*>& ys,
         const vector<vector<unsigned>> &runtime_indices,
         int batch_size)
     {
@@ -434,7 +451,7 @@ namespace OoC
         reset();
         for (int nid = n_params; nid < (int)nodes.size(); nid++)
             nodes[nid]->dim.bd *= batch_size;
-        
+
         // set nfx for input nodes
         DYNET_ASSERT(xs.size() == input_nodes.size(), "input check error in Block::forward");
         for (size_t i = 0; i < xs.size(); i++)
@@ -443,54 +460,65 @@ namespace OoC
         }
 
         // set nfx for output nodes
-        float *ptr = fx.v;
-        assert(ptr != nullptr);
-
-        for (auto &output: output_nodes) {
-            // todo: fix bug here
-            if (output.is_examplar)
-                batches[output.bid].nfx.v = ptr;
-            ptr += nodes[output.nid]->dim.size();
+        assert(output_nodes.size() == ys.size());
+        for (int oid = 0; oid < output_nodes.size(); ++oid)
+        {
+            assert(ys[oid]->v != nullptr);
+            batches[output_nodes[oid].bid].nfx.v = ys[oid]->v;
         }
-        
+
         // set pindices for lookup nodes
         assert(runtime_nodes.size() == runtime_indices.size());
 
         for (int i = 0; i < runtime_nodes.size(); ++i)
         {
-            auto & runtime_node = runtime_nodes[i];
-            if (runtime_node.second == nt::lookup){
+            auto &runtime_node = runtime_nodes[i];
+            if (runtime_node.second == nt::lookup)
+            {
                 auto node = static_cast<dynet::LookupNode *>(nodes[runtime_node.first]);
                 node->pindex = nullptr;
                 node->pindices = &runtime_indices[i];
             }
-            else if (runtime_node.second == nt::pnls){
-                auto node = static_cast<dynet::PickNegLogSoftmax*>(nodes[runtime_node.first]);
+            else if (runtime_node.second == nt::pnls)
+            {
+                auto node = static_cast<dynet::PickNegLogSoftmax *>(nodes[runtime_node.first]);
                 node->pval = nullptr;
                 node->pvals = &runtime_indices[i];
             }
         }
 
-        for (auto bid: memory_allocation_order){
-            memory_allocate(batches[bid]);
+        for (auto bid : memory_allocation_order)
+        {
+            memory_allocate(bid);
         }
 
-        for (int bid = n_params; bid < (int)batches.size(); bid++){
-            execute(batches[bid]);
+        for (int bid = n_params; bid < (int)batches.size(); bid++)
+        {
+            execute(bid);
         }
 
         for (int nid = n_params; nid < (int)nodes.size(); nid++)
             nodes[nid]->dim.bd /= batch_size;
     }
 
-    void Block::memory_allocate(BatchInfo &my_batch)
+    void Block::memory_allocate(int bid)
     {
+        auto & my_batch = batches[bid];
         global_timer.start("memory allocation");
         auto &batch_ids = my_batch.ids;
         auto &nfx = my_batch.nfx;
         assert(batch_ids.size());
-        if (nodes[batch_ids.front()]->is_get){
-            // do nothing 
+        if (nodes[my_batch.ids.front()]->is_function)
+        {
+            auto node = nodes[my_batch.ids.front()];
+            if (batch_ids.size() != 1)
+            {
+                my_batch.concat = node->autobatch_concat(*this);
+                my_batch.pseudo_node = node->autobatch_pseudo_node(*this, batch_ids);
+                if (my_batch.pseudo_node != nullptr){
+                    my_batch.pseudo_node->device = nodes[batch_ids.front()]->device;
+                }
+            }
         }
         else if (batch_ids.size() == 1)
         {
@@ -579,8 +607,9 @@ namespace OoC
         global_timer.stop("memory allocation");
     }
 
-    void Block::execute(BatchInfo &my_batch)
+    void Block::execute(int bid)
     {
+        auto & my_batch = batches[bid];
         global_timer.start("execution");
         string current_batch_name;
         Tensor temp_nfx;
@@ -594,18 +623,9 @@ namespace OoC
             dynet::timer.start(current_batch_name);
         }
 
-        if (nodes[my_batch.ids.front()]->is_get){
-            for (auto id: my_batch.ids){
-                node2offset[id] = 0;
-                GetNode* node = static_cast<GetNode*> (nodes[id]);
-                const Tensor & bt = batches[node2batch[node->args.front()]].nfx;
-                Tensor & t = nfx_cache[id];
-                t.v = bt.v + *node->offset;
-                t.d = node->dim;
-                t.mem_pool = bt.mem_pool;
-                t.device = bt.device;
-            }
-            my_batch.nfx.v = nullptr;
+        if (nodes[my_batch.ids.front()]->is_get)
+        {
+            // do nothing
         }
         else if (my_batch.ids.size() == 1)
         {
@@ -619,16 +639,29 @@ namespace OoC
                 ++ai;
             }
             global_timer.start("computation");
-            // vector<string> input_dims;
-            // for (auto& x: xs) {
-            //     ostringstream o;
-            //     o << x->d;
-            //     input_dims.push_back(o.str());
-            // }
+            vector<string> input_dims;
+            for (auto& x: xs) {
+                ostringstream o;
+                o << x->d;
+                input_dims.push_back(o.str());
+            }
             // cout << "[" << name << "::forward] out{";
             // for (auto id: my_batch.ids) cout << id << ",";
-            // cout << "}" << my_batch.nfx.d << "=" << node->as_string(input_dims) << endl;
-            node->forward(xs, my_batch.nfx);
+            // cout << "} = " << node->as_string(input_dims);
+            if (node->is_function){
+                FunctorNode* functor_node = static_cast<FunctorNode*>(node);
+                vector<Tensor*> ys;
+                for (int oid = 0; oid < functor_node->n_output; ++oid)
+                    ys.push_back(&batches[bid+1+oid].nfx);
+                // cout << "dims={";
+                // for (auto y: ys) cout << y->d << ",";
+                // cout << "}" << endl;
+                functor_node->forward(xs, ys);
+            }
+            else {
+                // cout << "dim=" << my_batch.nfx.d << endl;
+                node->forward(xs, my_batch.nfx);
+            }
             global_timer.stop("computation");
         }
         else
@@ -675,7 +708,7 @@ namespace OoC
                     else
                     {
                         global_timer.cumint("n_memtransfer", my_batch.ids.size() * nodes[my_batch.ids.front()]->dim.size());
-                        global_timer.cumint("n_combine"+name, 1);
+                        global_timer.cumint("n_combine" + name, 1);
                         combine_tensors(my_batch.ids, i, *my_xsi);
                     }
                     my_batch.arg_nfxs[i] = my_xsi;
@@ -685,18 +718,31 @@ namespace OoC
 
             node->autobatch_reshape(*this, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
             global_timer.start("computation");
-            // vector<string> input_dims;
-            // int i = 0;
-            // for (auto& x: my_batch.arg_nfxs) {
-            //     ostringstream o;
-            //     o << x->d;
-            //     o << my_batch.concat[i++];
-            //     input_dims.push_back(o.str());
-            // }
+            vector<string> input_dims;
+            int i = 0;
+            for (auto& x: my_batch.arg_nfxs) {
+                ostringstream o;
+                o << x->d;
+                o << my_batch.concat[i++];
+                input_dims.push_back(o.str());
+            }
             // cout << "[" << name << "::forward] out{";
             // for (auto id: my_batch.ids) cout << id << ",";
-            // cout << "}" << my_batch.nfx.d << "=" << node->as_string(input_dims) << endl;
-            node->forward(my_batch.arg_nfxs, my_batch.nfx);
+            // cout << "}" << "=" << node->as_string(input_dims);
+            if (node->is_function){
+                auto functor_node = static_cast<FunctorNode*>(node);
+                vector<Tensor*> ys;
+                for (int oid = 0; oid < functor_node->n_output; ++oid)
+                    ys.push_back(&batches[oid+bid+1].nfx);
+                // cout << ",dim={";
+                // for (auto & y:ys) cout << y->d << ",";
+                // cout << "}" << endl;
+                functor_node->forward(my_batch.arg_nfxs, ys);
+            }
+            else {
+                // cout << ",dim="<< my_batch.nfx.d<<endl;
+                node->forward(my_batch.arg_nfxs, my_batch.nfx);
+            }
             global_timer.stop("computation");
         }
         if (profiling_flag)
@@ -729,15 +775,16 @@ namespace OoC
     // To minimize the number of host-to-device memory copies, we put a bunch of
     // data in contiguous memory. Since we need to pass both pointers and sizes,
     // we use this union.
-    union CopyArgs {
-    float* ptr;
-    std::size_t n;
+    union CopyArgs
+    {
+        float *ptr;
+        std::size_t n;
     };
-    static_assert(sizeof(float*) == sizeof(std::size_t),
-                "Pointer size must be the same size as size_t");
+    static_assert(sizeof(float *) == sizeof(std::size_t),
+                  "Pointer size must be the same size as size_t");
 
     void Block::combine_tensors(const std::vector<dynet::VariableIndex> &batch_ids,
-                         int aid, dynet::Tensor &tout)
+                                int aid, dynet::Tensor &tout)
     {
         // global_timer.start("EXT combine tensors");
         // global_timer.start("EXT combine preparation");
@@ -829,12 +876,16 @@ namespace OoC
         // global_timer.stop("EXT combine tensors");
     }
 
-    Block::~Block(){
-        for (auto& batch: batches) {
+    Block::~Block()
+    {
+        for (auto &batch : batches)
+        {
             delete batch.pseudo_node;
             batch.pseudo_node = nullptr;
-            for (size_t i = 0; i < batch.arg_nfxs.size(); ++i){
-                if (batch.concat[i]){
+            for (size_t i = 0; i < batch.arg_nfxs.size(); ++i)
+            {
+                if (batch.concat[i])
+                {
                     delete batch.arg_nfxs[i];
                     batch.arg_nfxs[i] = nullptr;
                 }
@@ -843,31 +894,42 @@ namespace OoC
         batches.clear();
     }
 
-    int Block::self_check(){
+    int Block::self_check()
+    {
         vector<int> memid(nodes.size(), -1);
         int n_combine = 0;
         int idx = 0;
-        for (auto & bid: memory_allocation_order) {
-            for (auto id: batches[bid].ids)
+        for (auto &bid : memory_allocation_order)
+        {
+            for (auto id : batches[bid].ids)
                 memid[id] = idx++;
         }
-        for (auto & batch: batches){
+        for (auto &batch : batches)
+        {
             assert(batch.ids.size());
             auto examplar = batch.ids.front();
             int n_arg = nodes[examplar]->args.size();
-            for (auto id: batch.ids) assert(nodes[id]->args.size() == n_arg);
-            for (int aid = 0; aid < n_arg; ++aid){
+            for (auto id : batch.ids)
+                assert(nodes[id]->args.size() == n_arg);
+            for (int aid = 0; aid < n_arg; ++aid)
+            {
                 int example_arg = nodes[examplar]->args[aid];
-                if (example_arg < n_input) continue;
-                int pos = memid[example_arg]-1;
-                for (auto id: batch.ids){
-                    if (memid[nodes[id]->args[aid]] < 0) break;
-                    if (memid[nodes[id]->args[aid]] != ++pos) {
-                        n_combine += 1; 
+                if (example_arg < n_input)
+                    continue;
+                int pos = memid[example_arg] - 1;
+                for (auto id : batch.ids)
+                {
+                    if (memid[nodes[id]->args[aid]] < 0)
+                        break;
+                    if (memid[nodes[id]->args[aid]] != ++pos)
+                    {
+                        n_combine += 1;
                         cout << "mem combine for batch ";
-                        for (auto id: batch.ids) cout << id << ",";
+                        for (auto id : batch.ids)
+                            cout << id << ",";
                         cout << "aid" << aid << ", inputs";
-                        for (auto id: batch.ids) cout << nodes[id]->args[aid] << ",";
+                        for (auto id : batch.ids)
+                            cout << nodes[id]->args[aid] << ",";
                         cout << endl;
                         break;
                     }
@@ -879,8 +941,10 @@ namespace OoC
 
     string Block::as_string(bool verbose)
     {
-        if (!freezed) return "not freezed";
-        if (!verbose) return name;
+        if (!freezed)
+            return "not freezed";
+        if (!verbose)
+            return name;
         ostringstream s;
         s << "-----------" << name << "---------" << endl;
         int idx = 0;
@@ -888,17 +952,20 @@ namespace OoC
         {
             assert(node != nullptr);
             vector<string> args;
-            for (auto arg: node->args) {
+            for (auto arg : node->args)
+            {
                 args.push_back(to_string(arg));
             }
-            s << idx << "\t:" << node->as_string(args) << node->dim 
-            << ","<< node2batch[idx] << "," << node2offset[idx]  << endl;
+            s << idx << "\t:" << node->as_string(args) << node->dim
+              << "," << node2batch[idx] << "," << node2offset[idx] << endl;
             idx++;
         }
         s << "batches: ";
-        for (auto& bid: memory_allocation_order) {
+        for (auto &bid : memory_allocation_order)
+        {
             s << "[" << bid << "]{";
-            for (auto id: batches[bid].ids) s << id << ", ";
+            for (auto id : batches[bid].ids)
+                s << id << ", ";
             s << "}, ";
         }
         s << endl;
@@ -909,14 +976,17 @@ namespace OoC
         s << endl;
         s << "output_nodes(nid,bid,is_examplar,dim,idx): ";
         assert(output_nodes.size() == output_indices.size());
-        for (auto & output: output_nodes){
-            s << "(" << output.nid << ", " << output.bid << "," << output.is_examplar << "," 
-                << output.dim << "," << output.idx << "), ";
+        for (auto &output : output_nodes)
+        {
+            s << "(" << output.nid << ", " << output.bid << ","
+              << ","
+              << output.dim << "," << output.idx << "), ";
         }
         s << endl;
         s << "one_batch_size: " << one_batch_size << endl;
         s << "runtime_nodes: ";
-        for (auto kv: runtime_nodes) s << "(" << kv.first << "," << type2name[kv.second] << "), ";
+        for (auto kv : runtime_nodes)
+            s << "(" << kv.first << "," << type2name[kv.second] << "), ";
         s << endl;
         s << "mem_combine: " << self_check() << endl;
         s << "-------------------------------------" << endl;
@@ -925,8 +995,7 @@ namespace OoC
 
 } // namespace OoC
 
-
 /**
  * output_indices: <nid, offset_indices>
  * output_nodes: <nid, bid, user_specified_order>
-*/
+ */

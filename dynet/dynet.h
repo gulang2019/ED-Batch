@@ -22,6 +22,8 @@
 #include "dynet/device-structs.h"
 #include "utils.h"
 
+#include "dynet/ooc-mem.h"
+
 namespace dynet {
 
 extern float* kSCALAR_MINUSONE;
@@ -498,7 +500,27 @@ struct ComputationGraph {
    * \details This ID is incremented by 1 each time a computation graph is
    * created \return graph id
    */
-  unsigned get_id() const { return graph_id; };  
+  unsigned get_id() const { return graph_id; }; 
+
+  /**
+   * \brief allocate some memory
+   */
+  OoC::View* allocate(const Dim& d, const std::vector<int>& dims);
+  
+  /**
+   * \brief allocate some memory
+   */
+  OoC::View* allocate_ragged(const Dim& d, const std::vector<int>& dims, bool transpose = false, bool reverse = false);
+
+  /**
+   * \brief Bind node with memory
+   */
+  void bind(Expression e, OoC::View* view, std::initializer_list<int> indices);
+
+  /**
+   * \brief set batches by user
+   */ 
+  void set_batches(const std::vector<std::vector<Expression> > & batches);
 
   static SigMap sigmap;
   static std::vector<OoC::typeInfo> stypes;
@@ -818,6 +840,9 @@ struct Node {
 
   // a flag to mark the getNode
   bool is_get = false;
+  
+  // a flag to mark the functionNode 
+  bool is_function = false;
 
   // a memo for autobatch_sig 
   mutable int _type = -1;

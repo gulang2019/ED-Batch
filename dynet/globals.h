@@ -17,7 +17,7 @@ extern OoC::Timer global_timer;
 extern std::string schedule_alg;
 extern bool blocked;
 extern bool opt_mem;
-
+extern int do_pre_malloc;
 
 } // namespace dynet
 

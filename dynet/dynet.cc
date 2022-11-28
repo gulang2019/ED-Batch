@@ -129,6 +129,28 @@ void ComputationGraph::clear() {
   if (ee.get() != nullptr)
     ee->invalidate();
 }
+OoC::View* ComputationGraph::allocate(const Dim&d, const std::vector<int>& dims){
+  assert(ee != nullptr);
+  return ee->allocate(d, dims);
+}
+
+OoC::View* ComputationGraph::allocate_ragged(const Dim& d, const std::vector<int>& dims, bool transpose, bool reverse){
+  assert(ee != nullptr);
+  return ee->allocate_ragged(d, dims, transpose, reverse);
+}
+
+void ComputationGraph::bind(Expression e, OoC::View* view, std::initializer_list<int> indices) {
+  assert(ee != nullptr);
+  std::vector<int> __indices(indices);
+  ee->bind(e.i, view, __indices);}  
+
+void ComputationGraph::set_batches(const std::vector<std::vector<Expression> >& batches){
+  std::vector<std::vector<VariableIndex> > __batches(batches.size());
+  for (size_t i = 0; i < batches.size(); ++i) 
+    for (auto& e: batches[i]) __batches[i].push_back(e.i);
+  assert(ee != nullptr);
+  static_cast<BatchedExecutionEngine*>(ee.get()) -> set_batches(__batches);
+}
 
 VariableIndex ComputationGraph::add_function_node(Node *node, Device *device) {
   VariableIndex new_node_index((VariableIndex)nodes.size());

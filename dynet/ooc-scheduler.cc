@@ -1,5 +1,6 @@
 #include "exec.h"
 #include "dynet/timing.h"
+#include "dynet/nodes-functor.h"
 #include <functional>
 #include <queue>
 using namespace std;
@@ -7,9 +8,9 @@ using namespace OoC;
 
 namespace dynet {
     struct node_t {
-        node_t(const vector<VariableIndex>& args, int type, int mem_affinity): args(args), type(type), mem_affinity(mem_affinity){}
         int type;
-        const vector<VariableIndex>& args;
+        vector<VariableIndex> args;
+        bool invalid = false;
         int succ_cnt = 0;
         vector<VariableIndex> typewise_args;
         int typewise_succ_cnt = 0;
@@ -28,7 +29,7 @@ namespace dynet {
     ){
         assert(num_nodes_evaluated == 0);
         global_timer.start("schedule::preparation");
-        vector<node_t> nodes;
+        vector<node_t> nodes(upto+1);
         unordered_map<int, node_type_t> types;
         int fake_type = 0;
         for (VariableIndex nid = 0; nid <= upto; ++nid) {
@@ -36,7 +37,13 @@ namespace dynet {
             node2size[nid] = node->dim.size();
             int type = node->autobatch_sig(cg, cg.sigmap);
             type = type == 0? --fake_type:type;
-            nodes.push_back({node->args, type, nid});
+            nodes[nid].type = type;
+            nodes[nid].args = node->args;
+            nodes[nid].mem_affinity = nid;
+            nodes[nid].invalid = node->is_get;
+            for (auto & arg: nodes[nid].args) 
+                if (cg.nodes[arg]->is_get) 
+                    arg = cg.nodes[arg]->args[0];
             if (types[type].min_nid < 0)
                 types[type].min_nid = nid;
         }
@@ -50,8 +57,9 @@ namespace dynet {
             results.emplace_back(async([this, o, per_thread_work, &types, &nodes]{
                 priority_queue<VariableIndex> Q;
                 double node_explored=0.0;
-                for (int nid = o; nid < min(o+per_thread_work, (int)nodes.size()); nid++){
+                for (int nid = o; nid < std::min(o+per_thread_work, (int)nodes.size()); nid++){
                     auto& node = nodes[nid];
+                    if (node.invalid) continue;
                     if (node.type >= 0 && node.type < cg.types.size() && 
                         !cg.types[node.type].self_reachable)
                         continue;
@@ -82,6 +90,7 @@ namespace dynet {
 
         for (int nid = nodes.size() - 1; nid >= 0; --nid){
             auto & node = nodes[nid];
+            if (node.invalid) continue;
             for (auto arg: nodes[nid].args)
                 nodes[arg].succ_cnt++;
             for (auto arg: nodes[nid].typewise_args)
@@ -117,13 +126,19 @@ namespace dynet {
             auto & type = types[*this_tid];
             active_types.erase(this_tid);
             type.typewise_frontier_cnt -= type.frontiers.size();
-            // sort(type.frontiers.begin(), type.frontiers.end(), [this](int id1, int id2){
-            //     return memory_affinity[id1] < memory_affinity[id2];
-            // });
-            // int n_arg = nodes[type.frontiers.front()].args.size();
-            // for (int aid = 0; aid < n_arg; aid++) {
-            //     for (auto id: type.frontiers) memory_affinity[nodes[id].args[aid]] = memory_affinity_tag++;
-            // }
+
+            if (cg.nodes[type.frontiers.front()]->is_function){ // function node
+                int nid = type.frontiers.front();
+                FunctorNode* node = static_cast<FunctorNode*>(cg.nodes[nid]);
+                for (int i = node->n_output; i >= 1; --i) {
+                    vector<VariableIndex> get_node_batch(type.frontiers);
+                    for(auto& nid: get_node_batch) {
+                        nid += i;
+                    }
+                    reversed_batches.push_back(move(get_node_batch));
+                }
+            }
+
             reversed_batches.push_back(move(type.frontiers));
             assert(type.frontiers.size() == 0);
             int idx = 0, aid;
@@ -146,7 +161,7 @@ namespace dynet {
                 idx++;
             }
         }
-        global_timer.stop("scheule::get batches");
+        global_timer.stop("Scheule::get batches");
 
         for (auto iter = reversed_batches.rbegin(); iter != reversed_batches.rend(); iter++){
             for (auto id: *iter) node2batch[id] = batch_id;

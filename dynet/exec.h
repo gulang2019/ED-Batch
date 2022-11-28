@@ -24,7 +24,10 @@ class ExecutionEngine {
   virtual const Tensor& get_gradient(VariableIndex i) = 0;
   virtual void backward(bool full = false) = 0;
   virtual void backward(VariableIndex i, bool full = false) = 0;
- protected:
+  virtual OoC::View* allocate_ragged(const Dim& d, const std::vector<int>& seqs, bool transpose = false, bool reverse = false){return nullptr;}
+  virtual OoC::View* allocate(const Dim& d, const std::vector<int>& dims){return nullptr;}
+  virtual void bind(int nid, OoC::View* view, const std::vector<int>& indices) {}
+protected:
   explicit ExecutionEngine(ComputationGraph& cg);
   DeviceManager* const device_manager;
   ComputationGraph& cg;
@@ -68,6 +71,8 @@ public:
   std::vector<const Tensor*> arg_nfxs;
   // The super node dim 
   int dim;
+
+  bool mem_combine = false;
 };
 
 class BatchedExecutionEngine : public ExecutionEngine {
@@ -83,6 +88,13 @@ class BatchedExecutionEngine : public ExecutionEngine {
   const Tensor& incremental_forward(VariableIndex i) override;
   const Tensor& get_value(VariableIndex i) override;
   const Tensor& get_gradient(VariableIndex i) override;
+  
+  // hack method for user to do schedule
+  OoC::View* allocate_ragged(const Dim& d, const std::vector<int>&seqs, bool transpose = false, bool reverse = false);
+  OoC::View* allocate(const Dim& d, const std::vector<int>& dims);
+  void bind(int nid, OoC::View* view, const std::vector<int>&indices);
+  void set_batches(const std::vector<std::vector<VariableIndex> >& batches);
+  
   void backward(bool full = false) override;
   void backward(VariableIndex from_where, bool full = false) override;
   void garbage_collect();
@@ -90,8 +102,17 @@ class BatchedExecutionEngine : public ExecutionEngine {
   void visualize_snode(int upto, std::string filname, std::string graphname, std::unordered_set<std::pair<int, int>, OoC::hash_pair> *mem_transfer_edges = nullptr);
   void export_graph(VariableIndex upto, std::string filename);
   void export_snode_graph(std::string filename);
+
  private:
-  
+  struct bind_t{
+    int nid;
+    OoC::View* view;
+    std::vector<int> indices;
+  };
+  std::vector<OoC::View*> buffers;
+  std::vector<bind_t> bindings;
+  std::vector<std::vector<VariableIndex> > user_given_batches;
+
   static int graph_id;
   static OoC::DynamicBatching db;
   // static OoC::PatternCache pattern_cache;
@@ -113,6 +134,7 @@ class BatchedExecutionEngine : public ExecutionEngine {
   } schedule_mode;
   void schedule_snode_graph(std::string type);
   // store execution order and do memory allocation
+  void pre_malloc(VariableIndex batch_id);
   void memory_allocation(BatchInfo & my_batch);
   void execute_batch(BatchInfo& batch);
   void execution(int upto);
@@ -123,6 +145,7 @@ class BatchedExecutionEngine : public ExecutionEngine {
                                               int autobatch_strategy);
   void combine_tensors(const std::vector<VariableIndex>& batch_ids,
                        int aid, Tensor &tout);
+  void scatter_tensors(const std::vector<VariableIndex>& batch_ids, const Tensor &tin);
   void accumulate_tensors(const Tensor& tin,
                           const std::vector<VariableIndex>& batch_ids,
                           int ai);
@@ -144,7 +167,8 @@ class BatchedExecutionEngine : public ExecutionEngine {
   std::vector<int> node2mem_pos;
   // the lower bound on batch numbers;
   int mem_id; 
-  // void visualize_trie();
+  // whether the node is binded to user allocated memory
+  std::vector<bool> pre_allocated;
 
 };
 
