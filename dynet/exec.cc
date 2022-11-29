@@ -653,7 +653,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     else if (autobatch_strategy == 8){
       getBatches_typewiseLB(upto, batch_id);
     }
-    else if (autobatch_strategy == 9){
+    else if (autobatch_strategy == 9 || autobatch_strategy == 11){
       getBatches_rl(upto, batch_id);
     }
     else if (autobatch_strategy >= 5){

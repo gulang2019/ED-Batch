@@ -1,28 +1,13 @@
 #include "exec.h"
 #include "dynet/timing.h"
 #include "dynet/nodes-functor.h"
+#include "dynet/ooc-scheduler.h"
 #include <functional>
 #include <queue>
 using namespace std;
 using namespace OoC;
 
 namespace dynet {
-    struct node_t {
-        int type;
-        vector<VariableIndex> args;
-        bool invalid = false;
-        int succ_cnt = 0;
-        vector<VariableIndex> typewise_args;
-        int typewise_succ_cnt = 0;
-        int mem_affinity;
-    };
-
-    struct node_type_t {
-        vector<VariableIndex> frontiers;
-        int typewise_frontier_cnt = 0;
-        int min_nid = -1;
-    };
-
     void BatchedExecutionEngine::getBatches_typewiseLB(
         VariableIndex upto, 
         VariableIndex& batch_id
@@ -30,16 +15,14 @@ namespace dynet {
         assert(num_nodes_evaluated == 0);
         global_timer.start("schedule::preparation");
         vector<node_t> nodes(upto+1);
-        unordered_map<int, node_type_t> types;
+        unordered_map<int, type_t> types;
         int fake_type = 0;
         for (VariableIndex nid = 0; nid <= upto; ++nid) {
             auto node = cg.nodes[nid];
-            node2size[nid] = node->dim.size();
             int type = node->autobatch_sig(cg, cg.sigmap);
             type = type == 0? --fake_type:type;
             nodes[nid].type = type;
             nodes[nid].args = node->args;
-            nodes[nid].mem_affinity = nid;
             nodes[nid].invalid = node->is_get;
             for (auto & arg: nodes[nid].args) 
                 if (cg.nodes[arg]->is_get) 
@@ -52,7 +35,7 @@ namespace dynet {
         vector<future<double> > results;
         global_timer.start("schedule::compute G_t");
         int n_thread = 16;
-        int per_thread_work = (nodes.size() + n_thread - 1) / n_thread;
+        int per_thread_work = (upto + n_thread - 1) / n_thread;
         for (int o = 0; o < (int)nodes.size(); o += per_thread_work) {
             results.emplace_back(async([this, o, per_thread_work, &types, &nodes]{
                 priority_queue<VariableIndex> Q;
