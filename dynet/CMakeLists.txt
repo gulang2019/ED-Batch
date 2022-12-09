@@ -15,6 +15,8 @@ set(dynet_library_SRCS
     ooc-exec.cc
     ooc-bbmarker.cc
     ooc-computation_graph.cc
+    ooc-loop.cc
+    ooc-mem.cc
     expr.cc
     fast-lstm.cc
     globals.cc
@@ -172,6 +174,9 @@ treelstm.h
 virtual-cudnn.h
 weight-decay.h
 ooc-computation_graph.h
+ooc-scheduler.h
+ooc-loop.h
+ooc-mem.h
 )
 if(ENABLE_BOOST)
   list(APPEND dynet_library_HDRS mp.h)

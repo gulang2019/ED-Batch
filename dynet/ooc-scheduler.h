@@ -6,6 +6,7 @@
 #include <random>
 
 #include "dynet/dynet.h"
+#include "dynet/exec.h"
 #include "utils.h"
 
 namespace dynet{
@@ -32,13 +33,15 @@ namespace dynet{
             TYPEWISE
         }mode;
 
-        Env(ComputationGraph& _cg, VariableIndex _upto, int _num_nodes_evaluated, mode_t mode);
+        Env(ComputationGraph& _cg, VariableIndex _upto, int _num_nodes_evaluated, mode_t mode, SigMap& sigmap);
         void set_mode(mode_t _mode){mode = _mode;}
         bool done();
         void get_state(state_t & state);
+        state_t incremental_get_state(){return state;}
         int get_largest_type();
         virtual void reset();
-        virtual double step(int type, std::vector<VariableIndex>& batch) = 0;
+        virtual double step(int& type, std::vector<VariableIndex>& batch) = 0;
+        OoC::TupleDict<std::set<int> > best_actions;
 
     protected:
         void init_basic();
@@ -48,8 +51,11 @@ namespace dynet{
         VariableIndex upto;
         int num_nodes_evaluated;
         ComputationGraph* cg;
+        SigMap& sigmap;
+        BatchedExecutionEngine* ee;
         std::vector<node_t> nodes;
         std::unordered_map<int, type_t> types;
+        state_t state;
     };
 
 namespace RL{
@@ -62,18 +68,18 @@ namespace RL{
     };
 
     struct RLEnv: public Env {
-        RLEnv(ComputationGraph& _cg, VariableIndex _upto, int _num_nodes_evaluated, mode_t mode):
-        Env(_cg, _upto, _num_nodes_evaluated, mode){}
+        RLEnv(ComputationGraph& _cg, VariableIndex _upto, int _num_nodes_evaluated, mode_t mode, SigMap& sigmap):
+        Env(_cg, _upto, _num_nodes_evaluated, mode, sigmap){}
         
         void reset() override;
-        double step(int type, std::vector<VariableIndex>& batch) override;
+        double step(int& type, std::vector<VariableIndex>& batch) override;
 
     private:        
         double n_node; // number of node commited 
         int n_step; // number of step taken 
         std::vector<metric_t> history;
         double get_reward(); 
-        const double theta = 0.8;
+        const double theta = 1.0;
     };
 
     struct q_table_t {
@@ -144,8 +150,11 @@ namespace RL{
         QLearner(int cap):buffer(cap){}
 
         OoC::TupleDict<q_table_t> q_tables;
+        
         int take_action(const state_t & state, bool train = false);
-        void train(Env*env, int iter);
+        void train(Env*env, int iter = 500);
+        int inference(Env*env);
+        int typewise_inference(Env*env);
         
         ReplayBuffer buffer;
 
@@ -153,13 +162,15 @@ namespace RL{
         int type_ub;
 
         // hyper params 
-        double gamma = 0.9;
-        double epsilon = 0.8;
-        double epsilon_decay = 0.99;
+        double gamma = 0.90;
+        double epsilon = 0.5;
+        double epsilon_decay = 0.9;
         double epsilon_lb = 0.05;
-        double alpha = 0.2;
-        int n_step = 10;
-        int n_relay = 20;
+        double alpha = 0.4;
+        int n_step = 20;
+        int n_replay = 0;
     };
+
+    
 } // namespace RL
 } // namespace dynet 

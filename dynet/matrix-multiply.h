@@ -159,6 +159,68 @@ inline void MatrixTranspMultiplyAcc(const dynet::Device_CPU & dev, const dynet::
 #endif
 
 #ifdef __CUDACC__
+inline void MatrixMultiplyTransp(const dynet::Device_GPU & dev, const dynet::Tensor& l, const dynet::Tensor& r, dynet::Tensor& y) {
+  int max_b = std::max(l.d.bd, r.d.bd);
+  if(y.d.bd == 1 && (l.d.bd == r.d.bd)) {
+    CUBLAS_CHECK(cublasSgemm(dev.cublas_handle, CUBLAS_OP_N, CUBLAS_OP_T,
+          y.d.rows(), y.d.cols(), l.d.cols() * l.d.batch_elems(),
+          dev.kSCALAR_ZERO,
+          l.v, l.d.rows(),
+          r.v, r.d.rows(),
+          dev.kSCALAR_ONE, y.v, y.d.rows()));
+  } else {
+    CUBLAS_CHECK(cublasSgemmStridedBatched(dev.cublas_handle, CUBLAS_OP_N, CUBLAS_OP_T,
+          y.d.rows(), y.d.cols(), l.d.cols(),
+          dev.kSCALAR_ONE,
+          l.v, l.d.rows(), (l.d.bd > 1 ? l.d.batch_size() : 0),
+          r.v, r.d.rows(), (r.d.bd > 1 ? r.d.batch_size() : 0),
+          dev.kSCALAR_ZERO, y.v, y.d.rows(), y.d.batch_size(),
+          max_b));
+  }
+}
+
+# else
+inline void MatrixMultiplyTransp(const dynet::Device_CPU & dev, const dynet::Tensor& l, const dynet::Tensor& r, dynet::Tensor& y) {
+  int max_b = std::max(l.d.bd, r.d.bd);
+  if(y.d.bd == 1 && (l.d.bd == r.d.bd)) {
+    mat(y).noalias() = colbatch_matrix(l) * colbatch_matrix(r).transpose();
+  } else {
+    #ifdef __INTEL_MKL__
+      // grp_cout is 1 as matrices in a batch have equal shape
+      const MKL_INT grp_count = 1;
+      const float *a_array[max_b], *b_array[max_b];
+      float *c_array[max_b];
+      MKL_INT m[grp_count] = {l.d.rows()};
+      MKL_INT k[grp_count] = {r.d.cols()};
+      MKL_INT n[grp_count] = {r.d.rows()};
+      MKL_INT lda[grp_count] = {l.d.rows()};
+      MKL_INT ldb[grp_count] = {r.d.rows()};
+      MKL_INT ldc[grp_count] = {y.d.rows()};
+      MKL_INT size_per_grp[grp_count] = {max_b};
+      CBLAS_TRANSPOSE transA[grp_count] = {CblasNoTrans};
+      CBLAS_TRANSPOSE transB[grp_count] = {CblasTrans};
+
+      for (uint i = 0; i < max_b; ++i) {
+        a_array[i] = l.v + i*(l.d.bd > 1 ? l.d.batch_size() : 0);
+        b_array[i] = r.v + i*(r.d.bd > 1 ? r.d.batch_size() : 0);
+        c_array[i] = y.v + i*(y.d.bd > 1 ? y.d.batch_size() : 0);
+      }
+      cblas_sgemm_batch (CblasColMajor, transA, transB,
+            m, n, k,
+            dev.kSCALAR_ONE,
+            a_array, lda,
+            b_array, ldb,
+            dev.kSCALAR_ZERO, c_array, ldc,
+            grp_count, size_per_grp);
+    #else
+      for(int b = 0; b < max_b; ++b)
+        batch_matrix(y, b).noalias() += batch_matrix(l, b) * batch_matrix(r, b).transpose();
+    #endif
+  }
+}
+#endif
+
+#ifdef __CUDACC__
 inline void MatrixMultiplyTranspAcc(const dynet::Device_GPU & dev, const dynet::Tensor& l, const dynet::Tensor& r, dynet::Tensor& y) {
   int max_b = std::max(l.d.bd, r.d.bd);
   if(y.d.bd == 1 && (l.d.bd == r.d.bd)) {

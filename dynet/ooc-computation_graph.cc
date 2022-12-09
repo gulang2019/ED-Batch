@@ -362,8 +362,8 @@ namespace OoC
         set<int> output_constraint;
         for (auto &kv : output_indices)
             output_constraint.insert(kv.first - n_input);
-        cout << "[dynet::opt_mem]: " << opt_mem << endl;
-        OoC::Pattern *pattern = pattern_cache.add_pattern(id, node2args, node2type, {output_constraint}, dynet::opt_mem);
+        std::string alg = dynet::autobatch_flag == 1 ? "dynet" : "ooc";
+        OoC::Pattern *pattern = pattern_cache.add_pattern(id, node2args, node2type, alg);
         assert(batches.size() == n_params);
         memory_allocation_order = pattern->mem_allocation_order;
         for (auto &bid : memory_allocation_order)
@@ -442,7 +442,7 @@ namespace OoC
 
     void Block::forward(
         const vector<const Tensor *> &xs,
-        vector<Tensor*>& ys,
+        vector<Tensor *> &ys,
         const vector<vector<unsigned>> &runtime_indices,
         int batch_size)
     {
@@ -503,7 +503,7 @@ namespace OoC
 
     void Block::memory_allocate(int bid)
     {
-        auto & my_batch = batches[bid];
+        auto &my_batch = batches[bid];
         global_timer.start("memory allocation");
         auto &batch_ids = my_batch.ids;
         auto &nfx = my_batch.nfx;
@@ -515,7 +515,8 @@ namespace OoC
             {
                 my_batch.concat = node->autobatch_concat(*this);
                 my_batch.pseudo_node = node->autobatch_pseudo_node(*this, batch_ids);
-                if (my_batch.pseudo_node != nullptr){
+                if (my_batch.pseudo_node != nullptr)
+                {
                     my_batch.pseudo_node->device = nodes[batch_ids.front()]->device;
                 }
             }
@@ -609,7 +610,7 @@ namespace OoC
 
     void Block::execute(int bid)
     {
-        auto & my_batch = batches[bid];
+        auto &my_batch = batches[bid];
         global_timer.start("execution");
         string current_batch_name;
         Tensor temp_nfx;
@@ -639,27 +640,40 @@ namespace OoC
                 ++ai;
             }
             global_timer.start("computation");
-            vector<string> input_dims;
-            for (auto& x: xs) {
-                ostringstream o;
-                o << x->d;
-                input_dims.push_back(o.str());
+            if (profiling_flag > 1)
+            {
+                vector<string> input_dims;
+                for (auto &x : xs)
+                {
+                    ostringstream o;
+                    o << x->d << "@" << x->v;
+                    x->check();
+                    input_dims.push_back(o.str());
+                }
+                cout << "[" << name << "::forward] out{";
+                for (auto id : my_batch.ids)
+                    cout << id << "," << my_batch.nfx.v;
+                cout << "} = " << node->as_string(input_dims);
             }
-            // cout << "[" << name << "::forward] out{";
-            // for (auto id: my_batch.ids) cout << id << ",";
-            // cout << "} = " << node->as_string(input_dims);
-            if (node->is_function){
-                FunctorNode* functor_node = static_cast<FunctorNode*>(node);
-                vector<Tensor*> ys;
+            if (node->is_function)
+            {
+                FunctorNode *functor_node = static_cast<FunctorNode *>(node);
+                vector<Tensor *> ys;
                 for (int oid = 0; oid < functor_node->n_output; ++oid)
-                    ys.push_back(&batches[bid+1+oid].nfx);
-                // cout << "dims={";
-                // for (auto y: ys) cout << y->d << ",";
-                // cout << "}" << endl;
+                    ys.push_back(&batches[bid + 1 + oid].nfx);
+                // if (profiling_flag > 1)
+                {
+                    cout << "dims={";
+                    for (auto y : ys)
+                        cout << y->d << ",";
+                    cout << "}" << endl;
+                }
                 functor_node->forward(xs, ys);
             }
-            else {
+            else
+            {
                 // cout << "dim=" << my_batch.nfx.d << endl;
+                my_batch.nfx.check();
                 node->forward(xs, my_batch.nfx);
             }
             global_timer.stop("computation");
@@ -698,6 +712,7 @@ namespace OoC
                         contig = contig && (v == (min_node + tot_arg));
                         tot_arg += nodes[aid]->dim.size();
                     }
+
                     global_timer.stop("check contig");
                     if (contig)
                     {
@@ -715,32 +730,44 @@ namespace OoC
                 }
             }
             global_timer.stop("memtransfer");
-
             node->autobatch_reshape(*this, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
             global_timer.start("computation");
-            vector<string> input_dims;
-            int i = 0;
-            for (auto& x: my_batch.arg_nfxs) {
-                ostringstream o;
-                o << x->d;
-                o << my_batch.concat[i++];
-                input_dims.push_back(o.str());
+            if (profiling_flag > 1)
+            {
+                vector<string> input_dims;
+                int i = 0;
+                for (auto &x : my_batch.arg_nfxs)
+                {
+                    ostringstream o;
+                    o << x->d << "@" << x->v;
+                    x->check();
+                    o << my_batch.concat[i++];
+                    input_dims.push_back(o.str());
+                }
+                cout << "[" << name << "::forward] out{";
+                for (auto id : my_batch.ids)
+                    cout << id << ",";
+                cout << "}@" << my_batch.nfx.v << "=" << node->as_string(input_dims);
+                my_batch.nfx.check();
             }
-            // cout << "[" << name << "::forward] out{";
-            // for (auto id: my_batch.ids) cout << id << ",";
-            // cout << "}" << "=" << node->as_string(input_dims);
-            if (node->is_function){
-                auto functor_node = static_cast<FunctorNode*>(node);
-                vector<Tensor*> ys;
+            if (node->is_function)
+            {
+                auto functor_node = static_cast<FunctorNode *>(node);
+                vector<Tensor *> ys;
                 for (int oid = 0; oid < functor_node->n_output; ++oid)
-                    ys.push_back(&batches[oid+bid+1].nfx);
-                // cout << ",dim={";
-                // for (auto & y:ys) cout << y->d << ",";
-                // cout << "}" << endl;
+                    ys.push_back(&batches[oid + bid + 1].nfx);
+                if (profiling_flag > 1)
+                {
+                    cout << ",dim={";
+                    for (auto &y : ys)
+                        cout << y->d << ",";
+                    cout << "}" << endl;
+                }
                 functor_node->forward(my_batch.arg_nfxs, ys);
             }
-            else {
-                // cout << ",dim="<< my_batch.nfx.d<<endl;
+            else
+            {
+                // cout << ",dim=" << my_batch.nfx.d << endl;
                 node->forward(my_batch.arg_nfxs, my_batch.nfx);
             }
             global_timer.stop("computation");
@@ -960,7 +987,7 @@ namespace OoC
               << "," << node2batch[idx] << "," << node2offset[idx] << endl;
             idx++;
         }
-        s << "batches: ";
+        s << memory_allocation_order.size() << " batches: ";
         for (auto &bid : memory_allocation_order)
         {
             s << "[" << bid << "]{";

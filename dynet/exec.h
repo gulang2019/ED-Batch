@@ -133,14 +133,23 @@ class BatchedExecutionEngine : public ExecutionEngine {
     INFERENCE
   } schedule_mode;
   void schedule_snode_graph(std::string type);
-  // store execution order and do memory allocation
+  //allocate memory based on PQTree
   void pre_malloc(VariableIndex batch_id);
   void memory_allocation(BatchInfo & my_batch);
   void execute_batch(BatchInfo& batch);
   void execution(int upto);
   bool commit_batch_OoC(std::vector<int>& batch);
   void forward_OoC(VariableIndex upto);
-
+  /**
+   * autobatch_strategy: 
+   *  1:  dynet
+   *  2:  tf-fold
+   *  8:  typewise-lb
+   *  9:  rl 
+   *  10: user defined batch configuration
+   *  11: typewise-lb + rl
+   *  12: dynet + do pre allocate
+   */ 
   const Tensor& incremental_forward_no_update(VariableIndex upto,
                                               int autobatch_strategy);
   void combine_tensors(const std::vector<VariableIndex>& batch_ids,
@@ -169,7 +178,10 @@ class BatchedExecutionEngine : public ExecutionEngine {
   int mem_id; 
   // whether the node is binded to user allocated memory
   std::vector<bool> pre_allocated;
-
+  // pair<nid, offset>
+  std::vector<int> pre_allocate_nodes;
+  void pre_allocate_input(const std::vector<VariableIndex> & batch);
+  inline void allocate_pre_allocated_input();
 };
 
 } // namespace dynet

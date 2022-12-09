@@ -16,9 +16,7 @@ struct MatrixMultiply : public Node {
                                  const std::vector<VariableIndex> & batch_ids,
                                  const std::vector<int> & concat,
                                  std::vector<const Tensor*>& xs,
-                                 Tensor& fx) const override {
-    autobatch_reshape_concatonly(cg, batch_ids, concat, xs, fx);
-  }
+                                 Tensor& fx) const override; 
   bool sharedA;
   DYNET_NODE_DEFINE_DEV_IMPL()
 };

@@ -803,7 +803,8 @@ namespace dynet
 
     void BatchedExecutionEngine::pre_malloc(VariableIndex batch_id)
     {
-        if (!do_pre_malloc) return;
+        if (!do_pre_malloc)
+            return;
 
         global_timer.start("pre_alloc");
 
@@ -814,10 +815,11 @@ namespace dynet
             auto &batch = batches[bid];
             int n_arg = cg.nodes[batch.ids.front()]->args.size();
             for (int aid = 0; aid < n_arg; ++aid)
-            {    
+            {
                 std::vector<std::vector<int>> pattern;
                 pattern.push_back({});
-                for (auto id: batch.ids) pattern.back().push_back(id);
+                for (auto id : batch.ids)
+                    pattern.back().push_back(id);
                 pattern.push_back({});
                 for (auto nid : batch.ids)
                     pattern.back().push_back(cg.nodes[nid]->args[aid]);
@@ -827,17 +829,22 @@ namespace dynet
 
         list<int> mem_order;
 
-        if (do_pre_malloc == 1){
+        if (do_pre_malloc == 1)
+        {
             IsoPQTree tree((int)cg.nodes.size());
             // sort(patterns.begin(), patterns.end(), [](const std::vector<std::vector<int>> &p1, std::vector<std::vector<int>> &p2)
             //  { return p1.front().size() < p2.front().size(); });
             bool succ = tree.IsoReduceAll(patterns);
-            if (!succ) cerr << "[WARNING]: memory allocation not complete." << endl;
+            if (!succ)
+                cerr << "[WARNING]: memory allocation not complete." << endl;
             mem_order = tree.Frontier();
         }
-        else if (do_pre_malloc == 2){
-            for (VariableIndex bid = num_batches_evaluated; bid < batch_id; ++bid){
-                for (auto id: batches[bid].ids){
+        else if (do_pre_malloc == 2)
+        {
+            for (VariableIndex bid = num_batches_evaluated; bid < batch_id; ++bid)
+            {
+                for (auto id : batches[bid].ids)
+                {
                     mem_order.push_back(id);
                 }
             }
@@ -854,7 +861,8 @@ namespace dynet
             if (pre_allocated[nid])
                 continue;
             auto node = cg.nodes[nid];
-            if (!node->is_function){ // do not allocate memory for function node
+            if (!node->is_function)
+            { // do not allocate memory for function node
                 *offset_iter++ = memsize;
                 memsize += node2size[nid];
             }
@@ -870,7 +878,7 @@ namespace dynet
         auto mempool = cg.nodes.front()->device->pools[(int)DeviceMempool::FXS];
         float *base;
         if (do_pre_malloc == 1 || do_pre_malloc == 2)
-            base = (float*)mempool->allocate(memsize * sizeof(float));
+            base = (float *)mempool->allocate(memsize * sizeof(float));
 
         bid = -1;
         offset_iter = offsets.begin();
@@ -878,12 +886,13 @@ namespace dynet
         {
             if (pre_allocated[nid] || cg.nodes[nid]->is_function)
                 continue;
-            if (do_pre_malloc == 3 && node2batch[nid] != bid){
+            if (do_pre_malloc == 3 && node2batch[nid] != bid)
+            {
                 bid = node2batch[nid];
                 size_t memsize = 0;
-                for (auto id: batches[bid].ids) memsize += node2size[id];
-                base = (float*) mempool->allocate(memsize * sizeof(float)) 
-                    - *offset_iter;
+                for (auto id : batches[bid].ids)
+                    memsize += node2size[id];
+                base = (float *)mempool->allocate(memsize * sizeof(float)) - *offset_iter;
             }
             auto &t = nfx_cache[nid];
             auto node = cg.nodes[nid];
@@ -897,4 +906,90 @@ namespace dynet
         global_timer.stop("pre_alloc");
     }
 
+    void BatchedExecutionEngine::pre_allocate_input(const vector<VariableIndex> &batch)
+    {
+        // cout << "[pre_alloc]: ";
+        // for (auto id: batch) cout << id << ",";
+        // cout << endl;
+        auto autobatch_concat = cg.nodes[batch.front()]->autobatch_concat(cg);
+        for (int aid = 0; aid < autobatch_concat.size(); ++aid){
+            if (autobatch_concat[aid]){
+                for (auto nid: batch){
+                    int arg = cg.nodes[nid]->args[aid];
+                    if (!pre_allocated[arg]) {
+                        pre_allocated[arg] = true;
+                        pre_allocate_nodes.push_back(arg);
+                    }
+                }
+            }
+        }
+
+        return;
+    
+        unordered_map<int, int> partial_order_fwd;
+        unordered_map<int, int> partial_order_bwd;
+        for (int aid = 0; aid < autobatch_concat.size(); ++aid){
+            if (autobatch_concat[aid]){
+                for (auto nid: batch) {
+                    int arg = cg.nodes[nid]->args[aid];
+                    partial_order_fwd[arg] = partial_order_bwd[arg] = -1;
+                }
+            }
+        }
+
+        for (int aid = 0; aid < autobatch_concat.size(); ++aid){
+            if (autobatch_concat[aid])
+            {
+                int prev = cg.nodes[batch.front()]->args[aid];
+                for (int i = 1; i < batch.size(); ++i)
+                {
+                    int next = cg.nodes[batch[i]]->args[aid]; 
+                    auto& fwd = partial_order_fwd[prev];
+                    auto& bwd = partial_order_bwd[next];
+                    if ((fwd != -1 && fwd != next) || (bwd != -1 && bwd != prev)) { // not one-out, one-in 
+                        // cout << "[pre_alloc]: stop alloc because of non 1in 1out" << endl;
+                        return;
+                    }
+                    fwd = next;
+                    bwd = prev;
+                    prev = next;
+                }
+            }
+        }
+
+        // cout << "fwd:";
+        // for (auto &kv: partial_order_fwd) cout << "(" << kv.first << "," << kv.second << "),";
+        // cout << endl;
+        // cout << "bwd:";
+        // for (auto &kv: partial_order_bwd) cout << "(" << kv.first << "," << kv.second << "),";
+        // cout << endl;
+
+        // cout << "[pre_allocate]: order:";
+        unordered_set<int> visited;
+        for (auto &kv:partial_order_fwd){
+            int nid = kv.first;
+            if (visited.count(nid)) continue; 
+            visited.insert(nid);
+            while(partial_order_bwd[nid] != -1){
+                nid = partial_order_bwd[nid];
+                if (visited.count(nid)) {
+                    // cout << "[pre_alloc]: return due to cycle" << endl;
+                    return; // cycle detected!
+                }
+                visited.insert(nid);
+            }
+            pre_allocated[nid] = true;
+            pre_allocate_nodes.push_back(nid);
+            // cout << nid << " ";
+            while(partial_order_fwd[nid] != -1){
+                nid = partial_order_fwd[nid];
+                visited.insert(nid);
+                pre_allocated[nid] = true;
+                pre_allocate_nodes.push_back(nid);
+            }
+        }
+        // cout << endl;
+
+        
+    }
 } // namespace dynet

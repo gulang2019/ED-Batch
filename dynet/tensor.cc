@@ -50,6 +50,13 @@ bool Tensor::is_valid() const {
   return false;
 }
 
+
+void Tensor::check() const{
+    if (!device || device->type == DeviceType::GPU) return;
+    for (int i = 0; i < d.size(); i++)
+      v[i] = v[i];
+}
+
 ostream& operator<<(ostream& os, const Tensor& t) {
   if (t.device->type == DeviceType::CPU) {
     os << mat(t);
@@ -638,6 +645,7 @@ std::pair<Tensor, IndexTensor> TensorTools::topk(const Tensor& d, unsigned dim, 
 }
 #endif
 #endif
+
 
 } // namespace dynet
 

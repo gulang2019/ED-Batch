@@ -11,8 +11,8 @@ using namespace std;
 using namespace OoC;
 
 namespace dynet{
-    Env::Env(ComputationGraph& _cg, VariableIndex _upto, int _num_nodes_evaluated, mode_t mode):
-    upto(_upto), num_nodes_evaluated(_num_nodes_evaluated), cg(&_cg), mode(mode){
+    Env::Env(ComputationGraph& _cg, VariableIndex _upto, int _num_nodes_evaluated, mode_t mode, SigMap& sigmap):
+    upto(_upto), num_nodes_evaluated(_num_nodes_evaluated), cg(&_cg), mode(mode), sigmap(sigmap){
         init_basic();
         if (mode == TYPEWISE) init_typewise();
     }
@@ -23,21 +23,19 @@ namespace dynet{
 
     void Env::init_basic(){
         nodes.resize(upto + 1);
-        for (int nid = 0; nid < num_nodes_evaluated; ++ nid){
-            nodes[nid].invalid = true;
-        }
         int fake_type = 0;
         for (int nid = num_nodes_evaluated; nid <= upto; nid++) {
             auto _node = cg->nodes[nid];
-            int type = _node->autobatch_sig(*cg, cg->sigmap);
-            type = type==0? --fake_type:type;
             auto & node = nodes[nid];
+            node.invalid = _node->is_get;
+            if (node.invalid) continue;
+            int type = _node->autobatch_sig(*cg, sigmap);
+            type = type==0? --fake_type:type;
             node.args = _node->args;
             for (auto& arg: node.args) 
                 if (cg->nodes[arg]->is_get) arg = cg->nodes[arg]->args[0];
             node.type = type;
             node.succ_cnt = 0;
-            node.invalid = _node->is_get;
             if (types[type].min_nid < 0)
                 types[type].min_nid = nid;
         }
@@ -103,6 +101,8 @@ namespace dynet{
                 types[node.type].frontiers.push_back(nid);
             }
         }
+        state.clear();
+        get_state(state);
         // for (int nid = num_nodes_evaluated; nid <= upto; ++nid){
         //     cout << "NID" << nid << ":";
         //     cout << nodes[nid].invalid << ",";
@@ -156,51 +156,82 @@ namespace RL {
         n_step = -1;
     }
 
-    double RLEnv::step(int type, vector<VariableIndex>&batch){
+    double RLEnv::step(int& type, vector<VariableIndex>&batch){
+        double best_reward = -1, best_type;
+        if (mode == TYPEWISE){
+            for (auto& kv: types){
+                if (!kv.second.frontiers.size()) continue;
+                double reward = kv.second.frontiers.size() / (kv.second.typewise_frontier_cnt);
+                if (reward > best_reward){
+                    best_reward = reward;
+                    best_type = kv.first;
+                }
+            }
+            if (type == 0){
+                type = best_type;
+            }
+            state_t state;
+            get_state(state);
+            best_actions[state].insert(type);
+        }
+
         if (!types[type].frontiers.size()) 
             throw runtime_error("bad policy");
+
         double reward = 0;
         batch = move(types[type].frontiers);
+        state.erase(type);
         n_node += batch.size();
         n_step += 1;
         if (mode == TYPEWISE){
             auto & this_type = types[type];
-            reward += theta * batch.size() / (this_type.typewise_frontier_cnt + 0.0);
+            reward += theta * batch.size() / (this_type.typewise_frontier_cnt + 0.1);
             this_type.typewise_frontier_cnt -= batch.size();
         }
-        for (auto & nid: batch){
-            if (!(nid >= 0 && nid <= upto)){
-                cg->show_nodes();
-                for (int nid = 0; nid <= upto; nid ++ ){
-                    auto & node = nodes[nid];
-                    cout << "NID" << nid << ": args";
-                    for (auto arg:node.args) cout << arg << ",";
-                    cout << "valid: " << !node.invalid;
-                    cout << endl;
-                }
-                assert(false);
-            }
-            auto node = nodes[nid];
-            for (auto arg: node.args){
-                if (!nodes[arg].invalid && --nodes[arg].succ_cnt == 0){
-                    types[nodes[arg].type].frontiers.push_back(arg);
+        
+        // auto& autobatch_concat = cg->nodes[batch.front()]->autobatch_concat(*cg);
+        if (dynet::autobatch_flag == 9){
+            int narg = nodes[batch.front()].args.size();
+            for (int aid = 0; aid < narg; ++aid){
+                for (auto& nid: batch){
+                    int arg = nodes[nid].args[aid];
+                    if (!nodes[arg].invalid && --nodes[arg].succ_cnt == 0){
+                        types[nodes[arg].type].frontiers.push_back(arg);
+                        state.insert(nodes[arg].type);
+                    }
                 }
             }
+        }
+        else if (dynet::autobatch_flag == 11){
+            for (auto & nid: batch){
+                auto& node = nodes[nid];
+                for (auto arg: node.args){
+                    if (!nodes[arg].invalid && --nodes[arg].succ_cnt == 0){
+                        types[nodes[arg].type].frontiers.push_back(arg);
+                        state.insert(nodes[arg].type);
+                    }
+                }
+            }
+        }
 
-            if (mode == TYPEWISE){
+        if (mode == TYPEWISE){
+            for (auto & nid: batch){
+                auto& node = nodes[nid];
                 for (auto arg: node.typewise_args){
                     if (!nodes[arg].invalid && --nodes[arg].typewise_succ_cnt == 0) 
                         types[nodes[arg].type].typewise_frontier_cnt ++;
                 }
             }
         }
-        // reward += (1 - theta) * get_reward();
+        reward += (1 - theta) * get_reward();
         return reward; 
     }
 
 
     void QLearner::train(Env*env, int n_iter){
         cout << "training!" << endl;
+        if (env->mode == Env::TYPEWISE)
+            cout << "typewise batch: " << typewise_inference(env) << endl;
         vector<VariableIndex> batch;
         for (int i = 0; i < n_iter; i++){
             env->reset();
@@ -218,7 +249,7 @@ namespace RL {
                     q += alpha * (g - q);
                 }
                 int action = take_action(state, true);
-                assert(state.count(action));
+                // assert(state.count(action));
                 double reward = env->step(action, batch);
                 epsilon *= epsilon > epsilon_lb? 1:epsilon_decay;
                 assert(next_state.size() == 0);
@@ -237,17 +268,47 @@ namespace RL {
                 q += alpha * (g - q);
             }
 
-            // replay 
-            for (int i = 0; i < 20; i++){
-                buffer_t& entry = buffer.sample();
-                auto & q = q_tables[entry.state].q[entry.action];
-                q += alpha * ((entry.reward + gamma * q_tables[entry.next_state].max()) - q);
-            }
-
-            // if (profiling_flag && (i+1)%100==0)
-            //     cout << "iter " << i+1 << ",n_batch:" << env->n_step + 1 << endl;
+            if ((i+1)%100==0)
+                cout << "iter " << i+1 << ",n_batch:" << inference(env) + 1 << endl;
         }
         type_ub = env->get_largest_type();
+        // function<void(set<int>*s)> func = [](set<int>* s){
+        //     for (auto e: *s) cout << e << ",";
+        // };
+        // env->best_actions.report(func);
+    }
+
+    int QLearner::inference(Env*env){
+        env->reset();
+        int n_step = 0;
+        state_t state;
+        env->get_state(state);
+        while(state.size()){
+            n_step ++;
+            int action;
+            action = take_action(state);
+            vector<VariableIndex> batch;
+            env->step(action, batch);
+            state.clear();
+            env->get_state(state);
+        }   
+        return n_step;
+    }
+
+    int QLearner::typewise_inference(Env* env){
+        if (!env->mode == Env::TYPEWISE) return 1e9;
+        env->reset();
+        state_t state;
+        env->get_state(state);
+        while(state.size()){
+            n_step ++;
+            vector<VariableIndex> batch;
+            int action = 0;
+            env->step(action, batch);
+            state.clear();
+            env->get_state(state);
+        }   
+        return n_step;
     }
 
     int QLearner::take_action(const state_t & state, bool train){
@@ -266,6 +327,7 @@ namespace RL {
                 }
                 return *iter;
             }
+            // return 0;
         }
         auto& q_table = q_tables[state];
         if (q_table.size() == 0) {
@@ -284,30 +346,36 @@ namespace dynet{
         static RL::QLearner qlearner(1000);
         global_timer.start("RL::preprocess");
         RL::RLEnv* env;
-        global_timer.stop("RL::preprocess");
 
         if (autobatch_flag == 9 || qlearner.trained)
-            env = new RL::RLEnv(cg, upto, num_nodes_evaluated, Env::BASIC);
-        else env = new RL::RLEnv(cg, upto, num_nodes_evaluated, Env::TYPEWISE);
+            env = new RL::RLEnv(cg, upto, num_nodes_evaluated, Env::BASIC, sigmap);
+        else env = new RL::RLEnv(cg, upto, num_nodes_evaluated, Env::TYPEWISE, sigmap);
+        global_timer.stop("RL::preprocess");
         
         if (!qlearner.trained){
-            qlearner.train(env, 1000);
+            qlearner.train(env);
             qlearner.trained = true;
         }
         
         global_timer.start("RL::batching");
         env->reset();
         vector<vector<VariableIndex> > my_batches;
+        int n_step = 0, n_miss = 0; 
         while(true){
-            state_t state;
-            env->get_state(state);
+            state_t state = env->incremental_get_state();
+            // env->get_state(state);
             if (!state.size()) break;
+            n_step++;
             int action;
-            if (*state.rbegin() > qlearner.type_ub) action = *state.rbegin();
+            if (*state.rbegin() > qlearner.type_ub) {
+                n_miss ++;
+                action = *state.rbegin();
+            }
             else action = qlearner.take_action(state);
             my_batches.push_back({});
             env->step(action, my_batches.back());
         }   
+        cerr << "[scheduling] miss_rate:" << n_miss << "/" << n_step << endl;
         global_timer.stop("RL::batching");
 
 

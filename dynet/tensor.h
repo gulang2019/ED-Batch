@@ -123,6 +123,8 @@ struct Tensor {
     }
   }
 
+  void check() const;
+
   Dim d;  /**< Shape of tensor */
   float* v;  /**< Pointer to memory */
   Device* device;

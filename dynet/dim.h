@@ -97,6 +97,7 @@ struct Dim {
    * \return Batch size * size of a batch
    */
   inline unsigned int size() const {
+    // std::cout << "size():" << batch_size() << "," << bd << "," << batch_size() * bd << std::endl;
     return batch_size() * bd;
   }
   /**
