@@ -71,6 +71,8 @@ public:
   std::vector<const Tensor*> arg_nfxs;
   // The super node dim 
   int dim;
+  // whether to pre_allocate the input
+  bool pre_alloc = false;
 
   bool mem_combine = false;
 };
@@ -115,11 +117,6 @@ class BatchedExecutionEngine : public ExecutionEngine {
 
   static int graph_id;
   static OoC::DynamicBatching db;
-  // static OoC::PatternCache pattern_cache;
-  // static OoC::Trie head;
-  // static std::vector<OoC::typeInfo> stypes;
-  // static OoC::Scheduler& scheduler;
-  // static std::vector<OoC::typeInfo> stypes;
   // a sophisticated implementation of OoC's inference stage
   void getBatches_typewiseLB(VariableIndex upto, VariableIndex& batch_id);
   void getBatches_rl(VariableIndex upto, VariableIndex& batch_id);
@@ -145,13 +142,20 @@ class BatchedExecutionEngine : public ExecutionEngine {
    *  1:  dynet
    *  2:  tf-fold
    *  8:  typewise-lb
-   *  9:  rl 
+   *  9:  typewise-lb + rl + an pre_alloc
    *  10: user defined batch configuration
-   *  11: typewise-lb + rl
+   *  11: typewise-lb + rl + an + rl pre_alloc 
    *  12: dynet + do pre allocate
+   *  13: dyn
    */ 
   const Tensor& incremental_forward_no_update(VariableIndex upto,
                                               int autobatch_strategy);
+  struct MemoryBlock{
+    float* base;
+    size_t sz;
+    bool avail;
+  };
+  std::vector<MemoryBlock> memory_blocks;
   void combine_tensors(const std::vector<VariableIndex>& batch_ids,
                        int aid, Tensor &tout);
   void scatter_tensors(const std::vector<VariableIndex>& batch_ids, const Tensor &tin);
@@ -170,7 +174,7 @@ class BatchedExecutionEngine : public ExecutionEngine {
   std::vector<BatchInfo> batches; // length: number of batches
   std::vector<int> memory_affinity;
   int memory_affinity_tag = 0;
-  SigMap sigmap;
+  static SigMap sigmap;
 
   // For debug 
   std::vector<int> node2mem_pos;

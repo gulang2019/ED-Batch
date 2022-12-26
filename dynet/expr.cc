@@ -311,8 +311,8 @@ Expression to_device(const Expression & x, Device *device) {
 Expression affine_transform(const std::initializer_list<Expression> &xs) { return detail::f<AffineTransform>(xs); }
 Expression affine_transform(const std::vector<Expression> &xs) { return detail::f<AffineTransform>(xs); }
 
-Expression sum(const std::initializer_list<Expression> &xs) { return detail::f<Sum>(xs); }
-Expression sum(const std::vector<Expression> &xs) { return detail::f<Sum>(xs); }
+Expression sum(const std::initializer_list<Expression> &xs, bool is_reduce) { return detail::f<Sum>(xs, is_reduce); }
+Expression sum(const std::vector<Expression> &xs, bool is_reduce) { return detail::f<Sum>(xs, is_reduce); }
 
 Expression concatenate_to_batch(const std::initializer_list<Expression> &xs) { return detail::f<ConcatenateToBatch>(xs); }
 Expression concatenate_to_batch(const std::vector<Expression> &xs) { return detail::f<ConcatenateToBatch>(xs); }

@@ -720,7 +720,7 @@ namespace dynet
 
     void BatchedExecutionEngine::visualize(int upto, string filename, string graphname, unordered_set<pair<int, int>, hash_pair> *mem_transfer_edges)
     {
-        if (profiling_flag <= 1)
+        if (profiling_flag <= 0)
             return;
         ofstream file;
         file.open(filename);

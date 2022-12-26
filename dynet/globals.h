@@ -18,6 +18,7 @@ extern std::string schedule_alg;
 extern bool blocked;
 extern bool opt_mem;
 extern int do_pre_malloc;
+extern int ooc_autobatch_flag;
 
 } // namespace dynet
 

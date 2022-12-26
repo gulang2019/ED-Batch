@@ -9,7 +9,7 @@ using namespace std;
 
 namespace dynet
 {
-
+    unordered_map<int, vector<vector<int> > >ComputationGraph::batch_sequences;
     SigMap ComputationGraph::sigmap;                // static of computation graph
     vector<OoC::typeInfo> ComputationGraph::stypes; // static of computation graph
     Trie<OoC::BBInfo *> ComputationGraph::head;     // static of computation graph

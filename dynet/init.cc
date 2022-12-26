@@ -135,6 +135,17 @@ DynetParams extract_dynet_params(int& argc,
       }
     }
 
+    else if (startswith(arg, "--ooc-autobatch") ||
+             startswith(arg, "--ooc_autobatch")) {
+      if (!has_arg(argi, argc, argv)) {
+        throw std::invalid_argument("[ooc] --ooc-autobatch expects an argument (0 for none 1 for on)");
+      } else { 
+        string a2 = get_arg(argi, argv);
+        istringstream c(a2); c >> params.ooc_autobatch;
+        remove_args(argc, argv, argi, 2);
+      }
+    }
+
     // Profiling
     else if (startswith(arg, "--dynet-profiling") ||
              startswith(arg, "--dynet_profiling")) {
@@ -294,6 +305,10 @@ void initialize(DynetParams& params) {
   if(params.autobatch)
     cerr << "[dynet] using autobatching" << endl;
   autobatch_flag = params.autobatch;
+
+  if (params.ooc_autobatch) 
+    cerr << "[ooc] using autobatching" << endl;
+  ooc_autobatch_flag = params.ooc_autobatch;
   
   if(params.profiling)
     cerr << "[dynet] using profiling level " << params.profiling << endl;

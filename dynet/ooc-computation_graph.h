@@ -67,13 +67,14 @@ namespace OoC
         std::vector<int> concat;
         dynet::Node *pseudo_node;
         std::vector<const dynet::Tensor *> arg_nfxs;
+        bool pre_alloc = false;
         ~BatchInfo() {}
     };
     struct Block : public dynet::ComputationGraph
     {
         // default constructor
         Block(): dynet::ComputationGraph(nullptr), id(block_id), 
-        name("block"+std::to_string(block_id)) {
+        name("block"+std::to_string(block_id)), opt(dynet::autobatch_flag >= 4) {
             block_id ++;
         }
         Block(std::string name): dynet::ComputationGraph(nullptr), id(block_id++), 
@@ -151,5 +152,7 @@ namespace OoC
         // memory for shared properties among block
         int memo_block_type = -1;
         int memo_get_type = -1;
+
+        bool opt; // whether optimization like PQTree is on.
     };
 } // namespace OoC

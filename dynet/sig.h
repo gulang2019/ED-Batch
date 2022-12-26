@@ -8,20 +8,27 @@
 #include <unordered_map>
 #include <map>
 #include <cstddef>
+#include <string>
+#include <cstring>
+#include <iostream>
+
+#include <dynet/dim.h>
 
 namespace dynet {
 
   namespace nt {
-    // TODO: synchronize with OoC::type2name
+    // TODO: synchronize with type2name
     enum NodeType {
       tanh=1, sqrt, abs, erf, square, cube, exp, logsigmoid, loggamma, log, nobackprop, scalegradient, identity, negate, rectify, logistic, softsign, silu, round, ceiling, floor,
-      sinh, cosh, asinh, acosh, atanh, sin, cos, tan, asin, acos, atan, plus_const, concat, cmult, csum, sum, squared_distance, softmax, pnls, pickrange, scalar_mult, dropout,
+      sinh, cosh, asinh, acosh, atanh, sin, cos, tan, asin, acos, atan, plus_const, concat, cmult, csum, sum, reduce, squared_distance, softmax, pnls, pickrange, scalar_mult, dropout,
       input, scalar_input, lookup, select, argmax_index,
       COMPLEX,
       affine, matmul, transpose,
       vanilla_lstm_gates, vanilla_lstm_h, vanilla_lstm_c,
       conv2d, block, get
     };
+
+    extern std::unordered_map<int, std::string> type2name;
   }
 
 struct SigYoav {
@@ -104,6 +111,7 @@ struct SigHash {
   inline void add_float(float f) {
     add_int(float_contents_as_int(f));
   }
+  inline void add_which(int _which){hash ^= which ^ _which; which = _which;}
   void add_node(unsigned i) { add_int((int)i); }
   void add_dim(const Dim &d) {
     add_int(-(int)d.nd);
@@ -163,9 +171,19 @@ struct SigLinearSortedMap {
     }
     found=0;
     sorted=false;
-    sigs.push_back(std::pair<Sig, int>(s, (int)sigs.size()));
-    whiches.push_back(s.which);
-    return (int)sigs.size()-1;
+    int next_sig;
+    if (valid_sigs.size()){
+      next_sig = valid_sigs.back();
+      valid_sigs.pop_back();
+      whiches[next_sig] = s.which;
+    }
+    else{
+      assert(whiches.size() == sigs.size());
+      next_sig = (int)(sigs.size());
+      whiches.push_back(s.which);
+    }
+    sigs.push_back(std::pair<Sig, int>(s, next_sig));
+    return next_sig;
   }
   void clear() {
     sigs.clear(); whiches.clear(); sorted=false;
@@ -175,6 +193,32 @@ struct SigLinearSortedMap {
     std::sort(sigs.begin(), sigs.end(), [](std::pair<Sig, int> s1, std::pair<Sig, int> s2) {return s1.first < s2.first;});
     sorted=true;
   }
+  
+  std::vector<int> valid_sigs; 
+  
+  void invalidate (nt::NodeType type){
+    // return;
+    // std::cout << "[sigmap::invalidate]:";
+    // std::cout << "before:"; show();
+    auto iter = sigs.begin();
+    while (iter != sigs.end()){
+      if (whiches[iter->second] == type){
+        valid_sigs.push_back(iter->second);
+        iter = sigs.erase(iter);
+      }
+      else iter++;
+    } 
+    // std::cout << "after:"; show();
+  }
+
+  void show(){
+    std::cout << "sig:";
+    for (auto& sig: sigs) std::cout << "(" << nt::type2name[whiches[sig.second]] << ","  << sig.second << "),";
+    std::cout << "erased:";
+    for (auto& t: valid_sigs) std::cout << t << ",";
+    std::cout << std::endl;
+  }
+
   int sig2type(int sig) { return whiches[sig]; }
   int size() { return sigs.size(); }
   std::vector<std::pair<Sig,int> > sigs;

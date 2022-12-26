@@ -743,8 +743,8 @@ Expression affine_transform(const std::vector<Expression> &xs);
  *
  * \return An expression where the ith element is equal to xs[0][i] + xs[1][i] + ...
  */
-Expression sum(const std::initializer_list<Expression> &xs);
-Expression sum(const std::vector<Expression> &xs);
+Expression sum(const std::initializer_list<Expression> &xs, bool is_reduce = false);
+Expression sum(const std::vector<Expression> &xs, bool is_reduce = false);
 
 /**
  * \ingroup arithmeticoperations

@@ -537,6 +537,13 @@ struct ComputationGraph {
    * \brief the typewise lowerbound of the number of kernels 
    */
   int dynamic_batching_lowerbound();
+  /**
+   * \brief the batch sequence 
+   */ 
+  static void dump_batch_sequence(std::string filename);
+
+  static std::unordered_map<int, std::vector<std::vector<int> > > batch_sequences;
+
   struct Type {
     std::string name;
     std::vector<int> args;

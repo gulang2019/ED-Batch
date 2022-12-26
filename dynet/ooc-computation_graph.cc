@@ -362,7 +362,7 @@ namespace OoC
         set<int> output_constraint;
         for (auto &kv : output_indices)
             output_constraint.insert(kv.first - n_input);
-        std::string alg = dynet::autobatch_flag == 1 ? "dynet" : "ooc";
+        std::string alg = opt ? "ooc" : "dynet";
         OoC::Pattern *pattern = pattern_cache.add_pattern(id, node2args, node2type, alg);
         assert(batches.size() == n_params);
         memory_allocation_order = pattern->mem_allocation_order;
@@ -487,15 +487,19 @@ namespace OoC
             }
         }
 
-        for (auto bid : memory_allocation_order)
-        {
-            memory_allocate(bid);
-        }
+        // if (opt){
+        //     for (int bid = n_params; bid < (int) batches.size(); bid++){
+        //         memory_allocate(bid);
+        //         execute(bid);
+        //     }
+        // }
+        // else {
+            for (auto bid : memory_allocation_order)
+                memory_allocate(bid);
 
-        for (int bid = n_params; bid < (int)batches.size(); bid++)
-        {
-            execute(bid);
-        }
+            for (int bid = n_params; bid < (int)batches.size(); bid++)
+                execute(bid);
+        // }
 
         for (int nid = n_params; nid < (int)nodes.size(); nid++)
             nodes[nid]->dim.bd /= batch_size;
@@ -974,6 +978,7 @@ namespace OoC
             return name;
         ostringstream s;
         s << "-----------" << name << "---------" << endl;
+        s << "opt: " << opt << endl;
         int idx = 0;
         for (auto node : nodes)
         {
@@ -987,14 +992,21 @@ namespace OoC
               << "," << node2batch[idx] << "," << node2offset[idx] << endl;
             idx++;
         }
+        s << "n_params: " << n_params <<", n_input:" << n_input << endl;
         s << memory_allocation_order.size() << " batches: ";
-        for (auto &bid : memory_allocation_order)
-        {
+        for (int bid = n_params; bid < (int)batches.size(); bid++){
             s << "[" << bid << "]{";
             for (auto id : batches[bid].ids)
                 s << id << ", ";
             s << "}, ";
         }
+        // for (auto &bid : memory_allocation_order)
+        // {
+        //     s << "[" << bid << "]{";
+        //     for (auto id : batches[bid].ids)
+        //         s << id << ", ";
+        //     s << "}, ";
+        // }
         s << endl;
         s << "input_nodes(nid, name, concat): ";
         assert(input_nodes.size() == autobatch_concat.size());

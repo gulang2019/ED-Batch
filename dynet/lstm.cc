@@ -361,6 +361,8 @@ VanillaLSTMBuilder::VanillaLSTMBuilder(unsigned layers,
       for (unsigned layer = 0; layer < layers; layer++){
         params_t param({input_dim, hidden_dim, ln_lstm, has_prev_state, layer});
         if (bb_gates.count(param) == 0){
+          cout << "[VanillaLSTM]: build instance for ";
+          cout << "input_dim: " << input_dim << ", hidden_dim:" << hidden_dim << "ln_lstm:" << ln_lstm << ",has_prev_state:" << has_prev_state << ",layer:" << layer << endl;
           bb_gates[param]= make_shared<OoC::Block>("lstm_update"+to_string(bb_gates.size()));
           OoC::Block& block = *bb_gates[param];
           vector<Expression> ln_vars;
@@ -584,9 +586,11 @@ Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
         tmp = vars[_BI] + layer_norm(vars[_X2I] * in, ln_vars[LN_GX], ln_vars[LN_BX]);
     }else{
       if (has_prev_state)
-        tmp = affine_transform({vars[_BI], vars[_X2I], in, vars[_H2I], i_h_tm1});
+        // tmp = affine_transform({vars[_BI], vars[_X2I], in, vars[_H2I], i_h_tm1});
+        tmp = vars[_BI] + matmul(vars[_X2I], in, false) + matmul(vars[_H2I], i_h_tm1, false);
       else
-        tmp = affine_transform({vars[_BI], vars[_X2I], in});
+        // tmp = affine_transform({vars[_BI], vars[_X2I], in});
+        tmp = vars[_BI] + matmul(vars[_X2I], in, false);
     }
     if (blocked){
       Expression o = has_prev_state? blocks[has_prev_state][i]->operator()(_cg, {{"affine", tmp}, {"c_tm1", i_c_tm1}}, {}):

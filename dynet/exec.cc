@@ -327,8 +327,17 @@ void BatchedExecutionEngine::combine_tensors(
 
   // allocate memory for tout
   // global_timer.start("EXT combined allocation");
-  float* dest =
-      static_cast<float*>(mempool->allocate(total_dsize * sizeof(float)));
+  float* dest = nullptr;
+  for (auto& block: memory_blocks){
+    if (block.avail && block.sz >= total_dsize){
+      block.avail = false;
+      dest = block.base;
+    }
+  }
+  if (dest == nullptr){
+    dest = static_cast<float*>(mempool->allocate(total_dsize * sizeof(float)));
+    memory_blocks.push_back({dest, total_dsize, false});
+  }
   // global_timer.stop("EXT combined allocation");
   // global_timer.start("EXT prepare args");
 
@@ -447,7 +456,7 @@ void BatchedExecutionEngine::scatter_tensors(
   //   cout << "[Scatter] for " << batch_ids.front() << ":" 
   //   << cg.nodes[batch_ids.front()]->as_dummy_string() << endl;
   // }
-  global_timer.cumint("scatter_memtransfer", num_seqs * node2size[batch_ids.front()] * sizeof(float));
+  global_timer.cumint("scatter_memtransfer", num_seqs * node2size[batch_ids.front()]);
   global_timer.cumint("n_scatter", !!num_seqs);
   return;
 }
@@ -574,7 +583,7 @@ void BatchedExecutionEngine::garbage_collect() {
 const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     VariableIndex upto, int autobatch_strategy) {
   timer.clear();
-
+  sigmap.invalidate(nt::reduce);
   // forward integrated func node
   if (cg.nodes[upto]->is_get) {
     auto get_node = static_cast<GetNode*>(cg.nodes[upto]);
@@ -1201,13 +1210,13 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
                         "Must have either a single node or a batch to execute");
             // Copy the things from the linked list to the actual batch.
             abptr = active_batched[curr_prof];
-            assert(abptr != (VariableIndex)0);
+            DYNET_ASSERT(abptr != (VariableIndex)0, "abptr is null");
             my_batch.ids.resize(active_batched[curr_prof+uptop1]);
             if (is_get_batch) 
               DYNET_ASSERT(my_batch.ids.size() == batches[batch_id - get_offset].ids.size(), 
                 "Must have same batch size between get and function.");
             for (int it = 0;
-                it < my_batch.ids.size(); ++it) {
+                it < (int)my_batch.ids.size(); ++it) {
               my_batch.ids[it] = is_get_batch? 
                 batches[batch_id - get_offset].ids[it] + get_offset:active_batched[abptr - 1];
               abptr = active_batched[abptr];
@@ -1270,16 +1279,27 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
         depth_profile_batches[make_pair(depth, sig)].push_back(j); 
       }
       for (auto & batch_info : depth_profile_batches) {
+        if (cg.nodes[batch_info.second.front()]->is_get) continue;
         if (batch_info.first.second == 0) {  // unbatchable
           for (auto curr_node : batch_info.second) {
             node2batch[curr_node] = batch_id;
             batches[batch_id++].ids.resize(1, curr_node);
           }
-        } else {  // batchable
+        } 
+        else {  // batchable
           for (auto curr_node : batch_info.second) {
             node2batch[curr_node] = batch_id;
           }
           batches[batch_id++].ids = batch_info.second;
+          auto examplar = cg.nodes[batch_info.second.front()];
+          if (examplar->is_function){
+            auto func_node = static_cast<FunctorNode*>(examplar);
+            for (int oid = 1; oid <= func_node->n_output; ++oid){
+              auto & ids = batches[batch_id++].ids;
+              ids = batch_info.second;
+              for (auto& id: ids) id += oid;
+            }
+          }
         }
       }
     }
@@ -1289,7 +1309,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     if (do_pre_malloc)
       for (int bid = num_batches_evaluated; bid < batch_id; bid ++){
         auto & my_batch = batches[bid];
-        if (cg.nodes[my_batch.ids.front()]->is_function)
+        if (my_batch.pre_alloc)
           pre_allocate_input(my_batch.ids);
       }
     allocate_pre_allocated_input();
@@ -1298,6 +1318,8 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     global_timer.stop("scheduling");
     // 2.5 print some debug info
     cerr << "Forward Call Batch_strategy " << autobatch_strategy  << " : " << batch_id << " kernels."  << endl;
+    // cout << "sigmap:";
+    // sigmap.show();
     timer.cumint("n_kernels", batch_id);
     global_timer.log("n_kernel", batch_id);
     global_timer.cumint("n_kernels", batch_id);
@@ -1359,6 +1381,15 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     //   for (auto & id: my_batch.ids) cout << id << ",";
     //   cout << endl;
     // }
+    if (profiling_flag > 0)
+    {
+      vector<int> seq;
+      for (int bid = num_batches_evaluated; bid < batch_id; ++bid){
+        int sig = cg.nodes[batches[bid].ids.front()]->autobatch_sig(cg, sigmap);
+        seq.push_back(sig);
+      }
+      cg.batch_sequences[autobatch_strategy].push_back(move(seq));
+    }
 
     // 3. Based on the batches, allocate the memory, etc
     global_timer.start("memory allocation");
@@ -1500,6 +1531,18 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
         }
         // timer.start("EXT computation");
         
+        // vector<string> inputs;
+        // ai = 0;
+        // for (VariableIndex arg : node->args) {
+        //     ostringstream o;
+        //     o << arg << "," << xs[ai++]->d;
+        //     inputs.push_back(o.str());
+        // }
+        // cout << "[forward] out{";
+        // if (!node->is_function)
+        //   for (auto id: my_batch.ids) cout << id << ",";
+        // else for (auto id: my_batch.ids) cout << id << ",";
+        // cout << "}=" << node->as_string(inputs) << endl;
 
         global_timer.start("computation");
         global_timer.lock();
@@ -1518,18 +1561,6 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
           node->forward(xs, my_batch.nfx);
         }
 
-        // vector<string> inputs;
-        // for (VariableIndex arg : node->args) {
-        //     ostringstream o;
-        //     o << "(" << arg << "," << get_nfx(arg) << ")";
-        //     inputs.push_back(o.str());
-        // }
-        // cout << "[forward] out{";
-        // if (!node->is_function)
-        //   for (auto id: my_batch.ids) cout << "(" << id << "," << get_nfx(id) << "),";
-        // else for (auto id: my_batch.ids) cout << id << ",";
-        // cout << "}=" << node->as_string(inputs) << endl;
-
         // timer.stop("EXT computation");
         global_timer.unlock();
         global_timer.stop("computation");
@@ -1543,6 +1574,8 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
         my_batch.arg_nfxs.resize(arity);
         // timer.start("EXT memtransfer");
         global_timer.start("memtransfer");
+        for (auto & block: memory_blocks) 
+          block.avail = true; 
         for(size_t i = 0; i < arity; ++i) {
           // 1) the inputs don't need to be concatenated. Just use the tensor
           if(!my_batch.concat[i]) {
@@ -1579,7 +1612,8 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
             //   autobatch_garbage[i] = false;
             } else { // if non-contig, copy xs_i into new mem.
               // 2.b) the inputs need to be concatenated, and are not contiguous
-              if (profiling_flag > 1){
+              if (profiling_flag > 0)
+              {
                 for (auto id: my_batch.ids) {
                   mem_transfer_edges.insert({cg.nodes[id]->args[i], id});
                 } 
@@ -1958,5 +1992,7 @@ void BatchedExecutionEngine::allocate_pre_allocated_input()
       t.device = node->device;
   }
 }
+
+SigMap BatchedExecutionEngine::sigmap;
 
 } // namespace dynet

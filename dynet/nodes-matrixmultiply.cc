@@ -97,7 +97,7 @@ namespace dynet
     // fx = mat(fx0) + xs[0] * xs[1]
     // cout << "matmul: x0," << xs[0]->d << ", x1:" << xs[1]->d << endl;
     // xs[0]{1024,2048X3},xs[1]{1,2048X3},fx{1,1024X3}
-    if (sharedA)
+    if (sharedA || xs[1]->d.nd == 1)
       dynet::MatrixMultiply(dev, *xs[0], *xs[1], fx, dev.kSCALAR_ZERO);
     else
       MatrixMultiplyTransp(dev, *xs[1], *xs[0], fx);

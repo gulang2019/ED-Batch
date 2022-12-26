@@ -8,7 +8,7 @@ namespace dynet {
 
 // y = \sum_i x_i
 struct Sum : public Node {
-  template <typename T> explicit Sum(const T& a) : Node(a) {}
+  template <typename T> explicit Sum(const T& a, bool is_reduce) : Node(a), is_reduce(is_reduce) {}
   virtual int autobatch_sig(const ComputationGraph &cg, SigMap &sm) const override;
   virtual std::vector<int> autobatch_concat(const ComputationGraph & cg) const override;
   virtual void autobatch_reshape(const ComputationGraph & cg,
@@ -19,6 +19,7 @@ struct Sum : public Node {
     if(dim.bd != 1)
       autobatch_reshape_concatonly(cg, batch_ids, concat, xs, fx);
   }
+  bool is_reduce;
   DYNET_NODE_DEFINE_DEV_IMPL()
   virtual bool supports_multibatch() const override { return true; }
 };

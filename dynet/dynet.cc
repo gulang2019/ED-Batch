@@ -11,6 +11,7 @@
 #include "dynet/devices.h"
 #include "dynet/timing.h"
 #include "dynet/nodes-functor.h"
+#include "dynet/ooc-executor.h"
 
 using namespace std;
 
@@ -69,7 +70,10 @@ void Node::autobatch_reshape_concatonly(const ComputationGraph & cg,
 }
 
 ComputationGraph::ComputationGraph():n_stored_stypes(stypes.size()){
-  if(autobatch_flag) {
+  if (ooc_autobatch_flag){
+    ee.reset(new OoC::Executor(*this));
+  }
+  else if(autobatch_flag) {
     ee.reset(new BatchedExecutionEngine(*this));
   } else {
     ee.reset(new SimpleExecutionEngine(*this));
@@ -533,11 +537,16 @@ void ComputationGraph::print_graphviz() const {
 }
 
 int ComputationGraph::dynamic_batching_lowerbound(){
+  int ret = 0;
+  for (int i = 0; i < nodes.size(); i++){
+    auto this_sig = nodes[i]->autobatch_sig(*this, sigmap);
+    if (this_sig == 0) ret ++;
+  }
+  
    int n_type = sigmap.size();
   vector<int> depth(nodes.size());
 
-  int ret = 0;
-  for (int j = 0; j < n_type; j++)
+  for (int j = 1; j < n_type; j++)
   {
       int max_depth = 0;
       for (int i = 0; i < nodes.size(); i++)
@@ -553,6 +562,20 @@ int ComputationGraph::dynamic_batching_lowerbound(){
       ret += max_depth;
   }
   return ret;
+}
+
+void ComputationGraph::dump_batch_sequence(std::string dirname){
+  for (auto& kv: batch_sequences){
+    string filename = dirname + "/" + to_string(kv.first) + ".txt";
+    ofstream file;
+    file.open(filename);
+    for (auto& seq: kv.second){
+      for (auto x: seq) 
+        file << x << ",";
+      file << endl;
+    }
+    file.close();  
+  }
 }
 
 }  // namespace dynet

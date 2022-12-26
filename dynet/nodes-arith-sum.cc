@@ -34,7 +34,10 @@ Dim Sum::dim_forward(const vector<Dim>& xs) const {
 }
 
 int Sum::autobatch_sig(const ComputationGraph &cg, SigMap &sm) const {
-  Sig s(nt::sum);
+  Sig s;
+  if (is_reduce)
+    s.add_which(nt::reduce);
+  else s.add_which(nt::sum);
   s.add_node(args.size());
   // Two cases:
   // If unbatched, it's just an elementwise addition

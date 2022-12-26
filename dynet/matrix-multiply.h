@@ -164,10 +164,10 @@ inline void MatrixMultiplyTransp(const dynet::Device_GPU & dev, const dynet::Ten
   if(y.d.bd == 1 && (l.d.bd == r.d.bd)) {
     CUBLAS_CHECK(cublasSgemm(dev.cublas_handle, CUBLAS_OP_N, CUBLAS_OP_T,
           y.d.rows(), y.d.cols(), l.d.cols() * l.d.batch_elems(),
-          dev.kSCALAR_ZERO,
+          dev.kSCALAR_ONE,
           l.v, l.d.rows(),
           r.v, r.d.rows(),
-          dev.kSCALAR_ONE, y.v, y.d.rows()));
+          dev.kSCALAR_ZERO, y.v, y.d.rows()));
   } else {
     CUBLAS_CHECK(cublasSgemmStridedBatched(dev.cublas_handle, CUBLAS_OP_N, CUBLAS_OP_T,
           y.d.rows(), y.d.cols(), l.d.cols(),

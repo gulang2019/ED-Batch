@@ -207,7 +207,7 @@ struct params_t {
 struct params_hash{
   size_t operator()(const params_t & param) const {
     // input_dim X hid X has_prev_state X (1 + n_layer)
-    return (param.input_dim << 16) + (param.hid << 5) + (param.has_prev_state<<4) + (param.ln_lstm? 0:1+param.layer);
+    return (param.input_dim << 16) + (param.hid << 5) + (param.has_prev_state<<4) + (param.ln_lstm? 1+param.layer:0);
   }
 };
 
