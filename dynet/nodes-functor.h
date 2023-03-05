@@ -18,7 +18,7 @@ namespace dynet{
         virtual Node* autobatch_pseudo_node(
             const ComputationGraph& cg,
             const std::vector<VariableIndex>& batch_ids) const;
-        virtual std::vector<int> autobatch_concat(const ComputationGraph & cg) const override;
+        inline virtual std::vector<int> autobatch_concat(const ComputationGraph & cg) const override;
         std::string as_string(const std::vector<std::string>& arg_names) const override;
         Dim dim_forward(const std::vector<Dim>& xs) const override; 
         virtual void autobatch_reshape(const ComputationGraph & cg,

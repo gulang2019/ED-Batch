@@ -57,7 +57,7 @@ public:
   void stop(std::string name) {
     cumtimes[name] += (timers[name]).stop();
   }
-  void cumint(std::string name, int value){
+  void cumint(std::string name, double value){
     if (cumints.count(name) == 0) cumints[name] = 0;
     cumints[name] += value;
   }
@@ -77,7 +77,7 @@ public:
   }
   std::map<std::string, double> cumtimes;
   std::map<std::string, Timing> timers;
-  std::map<std::string, int> cumints;
+  std::map<std::string, double> cumints;
 };
 
 } // namespace dynet

@@ -10,6 +10,7 @@ set(dynet_library_SRCS
     dynet.cc
     exec.cc
     exec-ooc.cc
+    ooc-executor.cc
     ooc-scheduler.cc
     ooc-scheduler-rl.cc
     ooc-exec.cc
@@ -70,6 +71,7 @@ set(dynet_library_SRCS
     param-nodes.cc
     pretrain.cc
     rnn-state-machine.cc
+    sig.cc
     rnn.cc
     saxe-init.cc
     shadow-params.cc
@@ -174,6 +176,7 @@ treelstm.h
 virtual-cudnn.h
 weight-decay.h
 ooc-computation_graph.h
+ooc-executor.h
 ooc-scheduler.h
 ooc-loop.h
 ooc-mem.h

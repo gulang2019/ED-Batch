@@ -19,6 +19,7 @@ extern bool blocked;
 extern bool opt_mem;
 extern int do_pre_malloc;
 extern int ooc_autobatch_flag;
+extern int block_opt_flag;
 
 } // namespace dynet
 

@@ -20,7 +20,7 @@ namespace dynet {
     // TODO: synchronize with type2name
     enum NodeType {
       tanh=1, sqrt, abs, erf, square, cube, exp, logsigmoid, loggamma, log, nobackprop, scalegradient, identity, negate, rectify, logistic, softsign, silu, round, ceiling, floor,
-      sinh, cosh, asinh, acosh, atanh, sin, cos, tan, asin, acos, atan, plus_const, concat, cmult, csum, sum, reduce, squared_distance, softmax, pnls, pickrange, scalar_mult, dropout,
+      sinh, cosh, asinh, acosh, atanh, sin, cos, tan, asin, acos, atan, plus_const, minus_const, concat, cmult, csum, sum, reduce, squared_distance, softmax, pnls, pickrange, scalar_mult, dropout,
       input, scalar_input, lookup, select, argmax_index,
       COMPLEX,
       affine, matmul, transpose,

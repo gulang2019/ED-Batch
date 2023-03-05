@@ -23,7 +23,7 @@ namespace OoC
         node2type.resize(upto + 1);
         node2succs.resize(upto + 1);
 
-        for (int nid = 0; nid <= (int)upto; ++nid)
+        for (int nid = num_nodes_evaluated; nid <= (int)upto; ++nid)
         {
             auto node = cg->nodes[nid];
             node2type[nid] = node->autobatch_sig(*cg, sigmap);
@@ -36,12 +36,12 @@ namespace OoC
     {
         vector<future<double>> results;
         int n_thread = 16;
-        int per_thread_work = (upto + n_thread) / n_thread;
+        int per_thread_work = (upto + n_thread - num_nodes_evaluated) / n_thread;
         vector<int> max_nid(sigmap.size());
-        for (int nid = 0; nid <= upto; ++nid)
+        for (int nid = num_nodes_evaluated; nid <= upto; ++nid)
             max_nid[node2type[nid]] = nid;
         node2succs_typewise.resize(upto+1, vector<int>());
-        for (int o = 0; o <= upto; o += per_thread_work)
+        for (int o = num_nodes_evaluated; o <= upto; o += per_thread_work)
         {
             results.emplace_back(async([this, o, per_thread_work, max_nid]
                                        {
@@ -78,7 +78,28 @@ namespace OoC
         global_timer.cumint("ave_explored", ave_explored);
     }
 
-    int AgendaScheduler::schedule(vector<VariableIndex>& batch)
+    int BaseScheduler::lower_bound() {
+        if (node2type.size() != (upto + 1)) basic_init();
+        int ret = 0;
+        vector<int> depth(upto+1);
+        for (int nid = num_nodes_evaluated; nid <= (int)upto; ++nid) 
+            if (node2type[nid] == 0) ret++;
+        for (auto tid = 1; tid < sigmap.size(); ++tid) {
+            int max_d = 0;
+            for (int nid = num_nodes_evaluated; nid <= (int)upto; ++nid) {
+                auto & d = depth[nid] = (node2type[nid] == tid); 
+                auto node = cg->nodes[nid];
+                for (auto arg: node->args) {
+                    d = max(depth[arg] + (node2type[nid] == tid), d);
+                }
+                max_d = max(d, max_d);
+            }
+            ret += max_d;
+        }
+        return ret;
+    }
+
+    int AgendaScheduler::schedule(vector<VariableIndex>& batch, int verbose)
     {
         int t = -1;
         double min_depth = 1e9;
@@ -107,6 +128,22 @@ namespace OoC
         }
         if (t < 0)
             return 0;
+        
+        if (verbose) {
+            cout << "[";
+            for (auto nid: type2frontiers[t]) cout << nid << ",";
+            cout << "]: ";
+            cout << "At State(";
+            for (int tid = 0; tid < type2frontiers.size(); ++tid) {
+                if (!type2frontiers[tid].size())
+                    continue;
+                cout << "[" << cg->nodes[type2frontiers[tid].front()]->as_dummy_string() << "," 
+                    <<  type2depth[tid] << "," << type_cnt[tid] << "],";
+            }  
+            cout << "), choose to batch " << cg->nodes[type2frontiers[t].front()]->as_dummy_string() << endl;
+            global_timer.cumint("batch-"+cg->nodes[type2frontiers[t].front()]->as_dummy_string(), 1);
+            cout << endl;
+        }
 
         batch.clear();
         if (t == 0)
@@ -146,17 +183,20 @@ namespace OoC
         return get_batches.size() == 0 ? 1 : -1;
     }
 
-    void AgendaScheduler::init(ComputationGraph *_cg, VariableIndex _upto)
+    void AgendaScheduler::init(ComputationGraph *_cg, VariableIndex _num_nodes_evaluated, VariableIndex _upto)
     {
         cg = _cg;
+        num_nodes_evaluated = _num_nodes_evaluated;
         upto = _upto;
         basic_init();
         type2frontiers.resize(sigmap.size(), {});
-        arity.resize(upto+1);
-        for (int nid = 0; nid <= (int)upto; ++nid)
+        arity.resize(upto+1, 0);
+        for (int nid = num_nodes_evaluated; nid <= (int)upto; ++nid)
         {
             auto node = cg->nodes[nid];
-            if (!(arity[nid] = node->arity()))
+            for (auto arg: node->args) 
+                arity[nid] += arg >= num_nodes_evaluated;
+            if (!arity[nid])
                 type2frontiers[node2type[nid]].push_back(nid);
         }
 
@@ -167,7 +207,7 @@ namespace OoC
             t = 0;
         for (auto &t : type_cnt)
             t = 0;
-        for (int nid = 0; nid <= upto; ++nid)
+        for (int nid = num_nodes_evaluated; nid <= upto; ++nid)
         {
             int &depth = node2depth[nid] = 0;
             auto node = cg->nodes[nid];
@@ -181,39 +221,47 @@ namespace OoC
         }
     }
 
-    void RLScheduler::init(ComputationGraph *_cg, VariableIndex _upto)
+    void RLScheduler::init(ComputationGraph *_cg, VariableIndex _num_nodes_evaluated, VariableIndex _upto)
     {
         cg = _cg;
+        num_nodes_evaluated = _num_nodes_evaluated;
         upto = _upto;
         basic_init();
         train();
+        // sigmap.show();
 
         n_hit = n_batch = 0;
-        arity.resize(upto + 1);
+        arity.resize(upto + 1, 0);
         type2frontiers.resize(sigmap.size(), {});
-        for (int nid = 0; nid <= (int)upto; ++nid)
+        for (int nid = num_nodes_evaluated; nid <= (int)upto; ++nid)
         {
             auto node = cg->nodes[nid];
-            if (!(arity[nid] = node->arity()))
+            for (auto arg: node->args)
+                arity[nid] += arg >= num_nodes_evaluated;
+            if (!arity[nid])
                 type2frontiers[node2type[nid]].push_back(nid);
         }
     }
 
-    double RLScheduler::inference()
+    int RLScheduler::inference()
     {
-        double loss = 0;
+        int loss = 0;
         type2frontiers.resize(sigmap.size(), {});
         for (auto& x: type2frontiers) x.clear();
-        for (int nid = 0; nid <= upto; ++nid)
+        for (int nid = num_nodes_evaluated; nid <= upto; ++nid)
         {
-            if (!(arity[nid] = cg->nodes[nid]->arity())){
+            auto node = cg->nodes[nid];
+            arity[nid] = 0;
+            for (auto arg: node->args)
+                arity[nid] += arg >= num_nodes_evaluated;
+            if (!arity[nid]){
                 type2frontiers[node2type[nid]].push_back(nid);
             }
         }
         while (true)
         {
             vector<VariableIndex> batch;
-            int suc = schedule_impl(batch, false);
+            int suc = schedule_impl(batch, false, 0);
             if (suc == 0)
                 break;
             loss++;
@@ -230,12 +278,15 @@ namespace OoC
         double best_loss = 1e9;
         typewise_init();
         cout << "finished typewise init!" << endl; 
-        arity.resize(upto + 1);
+        arity.resize(upto + 1, 0);
         typewise_arity.resize(upto + 1);
         typewise_frontier_cnt.resize(sigmap.size());
         type2frontiers.resize(sigmap.size());
         eps = eps_max;
 
+        int lb = lower_bound();
+        cout << "[Scheduler] lower_bound is " << lb << endl;
+        int train_iter = -1;
         for (int i = 0; i < n_iter; i++)
         {
             for (auto &x : typewise_arity)
@@ -243,9 +294,11 @@ namespace OoC
             for (auto &x : typewise_frontier_cnt)
                 x = 0;
             for (auto& x: type2frontiers) x.clear();
-            for (int nid = 0; nid <= upto; ++nid)
+            for (int nid = num_nodes_evaluated; nid <= upto; ++nid)
             {
-                if ((arity[nid] = cg->nodes[nid]->arity()) == 0)
+                auto node = cg->nodes[nid];
+                for (auto arg: node->args) arity[nid] += arg >= num_nodes_evaluated;
+                if (!arity[nid])
                     type2frontiers[node2type[nid]].push_back(nid);
                 for (auto succ : node2succs_typewise[nid])
                     typewise_arity[succ]++;
@@ -257,7 +310,7 @@ namespace OoC
             while (true)
             {
                 vector<VariableIndex> batch;
-                int suc = schedule_impl(batch, true);
+                int suc = schedule_impl(batch, true, 0);
                 if (suc == 0)
                     break;
                 n_batch++;
@@ -275,7 +328,7 @@ namespace OoC
                 q += alpha * (g - q);
             }
             eps = std::max(eps_min, eps_decay * eps);
-            if ((i + 1) % 100 == 0)
+            if ((i + 1) % 50 == 0)
             {
                 int loss = inference();
                 if (loss < best_loss)
@@ -284,10 +337,19 @@ namespace OoC
                     best_q_table = q_table;
                 }
                 cout << "[OoC::RLScheduler]: " << i+1 <<  ", " << inference() << "batches" << endl;
+                if (best_loss < lb * 1.01) { // heuristic stop when have good enough policy
+                    train_iter = i+1;
+                    break;
+                }
             }
         }
+        if (train_iter == -1) {
+            train_iter = n_iter;
+        }
+        global_timer.cumint("train_iter", train_iter);
+
         q_table = best_q_table;
-        cout << "[OoC::RLScheduler]: finished training " << inference() << "batches" << endl;
+        cout << "[OoC::RLScheduler]: finished training " << "at step" << train_iter << ", launches" << inference() << "batches" << endl;
         trained.insert(ooc_autobatch_flag);
     }
 
@@ -313,11 +375,11 @@ namespace OoC
         return ptr->argmax();
     }
 
-    int RLScheduler::schedule(vector<VariableIndex>& batch) {
-        return schedule_impl(batch, false);
+    int RLScheduler::schedule(vector<VariableIndex>& batch, int verbose) {
+        return schedule_impl(batch, false, verbose);
     }
 
-    int RLScheduler::schedule_impl(vector<VariableIndex> &batch, bool train)
+    int RLScheduler::schedule_impl(vector<VariableIndex> &batch, bool train, int verbose)
     {
         int t = -1;
         double min_depth = 1e9;
@@ -361,11 +423,21 @@ namespace OoC
                 if (train) {
                     logs.push_back({state, t,  -1 + ((type2frontiers[t].size() + 0.0) / typewise_frontier_cnt[t])});
                 }
+                if (verbose) {
+                    cout << "[";
+                    for (auto nid: type2frontiers[t]) cout << nid << ",";
+                    cout << "]";
+                    cout << "At State(";
+                    for (auto tid: state) {
+                        cout << cg->nodes[type2frontiers[tid].front()]->as_dummy_string() << ",";
+                    }
+                    cout << "), choose to batch " << cg->nodes[type2frontiers[t].front()]->as_dummy_string() << endl;
+                    global_timer.cumint("batch-" + cg->nodes[type2frontiers[t].front()]->as_dummy_string(), 1);
+                }
             }
         }
         if (t < 0)
             return 0;
-
         batch.clear();
         if (t == 0)
         {
@@ -411,11 +483,12 @@ namespace OoC
                 get_batches.push(node2type[nid + 1 + i]);
             }
         }
+        global_timer.stop("schedule-phase2");
         return get_batches.size() == 0 ? 1 : -1;
     }
 
     void RLScheduler::post_process() {
-        cout << "[RLScheduler::hit_rate]:" << n_hit << "/" << n_batch << endl;
+        // cerr << "[RLScheduler::hit_rate]:" << n_hit << "/" << n_batch << endl;
     }
 }
 

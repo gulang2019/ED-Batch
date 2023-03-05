@@ -201,7 +201,6 @@ namespace OoC
         global_timer.stop("synchronize");
     }
 
-    int Block::block_id = 0;
 
     Expression Block::operator()(
         dynet::ComputationGraph *cg,
@@ -238,6 +237,7 @@ namespace OoC
         if (output_nodes.size() == 1)
         {
             out = Expression(cg, nid + 1);
+            out.n_output = 1;
         }
         else
         {
@@ -354,6 +354,7 @@ namespace OoC
             nfx_cache[nid].v = nullptr;
             node2batch[nid] = nid;
             node2offset[nid] = 0;
+            get_nfx(nid);
             // memory_allocate(my_batch);
             // execute(my_batch);
         }
@@ -362,13 +363,13 @@ namespace OoC
         set<int> output_constraint;
         for (auto &kv : output_indices)
             output_constraint.insert(kv.first - n_input);
-        std::string alg = opt ? "ooc" : "dynet";
-        OoC::Pattern *pattern = pattern_cache.add_pattern(id, node2args, node2type, alg);
+        std::string alg = (opt&1) ? "ooc" : "dynet";
+        OoC::Pattern pattern = pattern_cache.get_pattern(node2args, node2type, alg);
         assert(batches.size() == n_params);
-        memory_allocation_order = pattern->mem_allocation_order;
+        memory_allocation_order = pattern.mem_allocation_order;
         for (auto &bid : memory_allocation_order)
             bid += n_params;
-        for (auto &ids : pattern->batch_ids)
+        for (auto &ids : pattern.batch_ids)
         {
             assert(ids.size());
             batches.push_back({});
@@ -430,6 +431,12 @@ namespace OoC
             assert(concat[kv.first] != -1);
             autobatch_concat.push_back(concat[kv.first]);
         }
+        if (opt >= 2)
+            aot_analysis();
+        
+        if (dynet::profiling_flag) {
+            cout << as_string(true) << endl;
+        }
     }
 
     void Block::reset()
@@ -465,6 +472,7 @@ namespace OoC
         {
             assert(ys[oid]->v != nullptr);
             batches[output_nodes[oid].bid].nfx.v = ys[oid]->v;
+            nfx_cache[output_nodes[oid].nid] = *ys[oid]; 
         }
 
         // set pindices for lookup nodes
@@ -487,19 +495,19 @@ namespace OoC
             }
         }
 
-        // if (opt){
-        //     for (int bid = n_params; bid < (int) batches.size(); bid++){
-        //         memory_allocate(bid);
-        //         execute(bid);
-        //     }
-        // }
-        // else {
+        if (aot_analysed){
+            memory_allocate_opt(batch_size);
+            for (int bid = n_params; bid < (int) batches.size(); bid++){
+                execute_opt(bid, batch_size);
+            }
+        }
+        else {
             for (auto bid : memory_allocation_order)
                 memory_allocate(bid);
 
             for (int bid = n_params; bid < (int)batches.size(); bid++)
                 execute(bid);
-        // }
+        }
 
         for (int nid = n_params; nid < (int)nodes.size(); nid++)
             nodes[nid]->dim.bd /= batch_size;
@@ -620,7 +628,7 @@ namespace OoC
         Tensor temp_nfx;
         vector<const Tensor *> xs(16);
 
-        if (profiling_flag)
+        if (dynet::profiling_flag > 1)
         {
             VariableIndex nid = my_batch.ids[0];
             Node *node = nodes[nid];
@@ -644,14 +652,13 @@ namespace OoC
                 ++ai;
             }
             global_timer.start("computation");
-            if (profiling_flag > 1)
+            if (dynet::profiling_flag > 1)
             {
                 vector<string> input_dims;
                 for (auto &x : xs)
                 {
                     ostringstream o;
                     o << x->d << "@" << x->v;
-                    x->check();
                     input_dims.push_back(o.str());
                 }
                 cout << "[" << name << "::forward] out{";
@@ -665,7 +672,7 @@ namespace OoC
                 vector<Tensor *> ys;
                 for (int oid = 0; oid < functor_node->n_output; ++oid)
                     ys.push_back(&batches[bid + 1 + oid].nfx);
-                // if (profiling_flag > 1)
+                if (dynet::profiling_flag > 1)
                 {
                     cout << "dims={";
                     for (auto y : ys)
@@ -676,8 +683,8 @@ namespace OoC
             }
             else
             {
-                // cout << "dim=" << my_batch.nfx.d << endl;
-                my_batch.nfx.check();
+                if (dynet::profiling_flag > 1)
+                    cout << "dim=" << my_batch.nfx.d << endl;
                 node->forward(xs, my_batch.nfx);
             }
             global_timer.stop("computation");
@@ -726,8 +733,7 @@ namespace OoC
                     }
                     else
                     {
-                        global_timer.cumint("n_memtransfer", my_batch.ids.size() * nodes[my_batch.ids.front()]->dim.size());
-                        global_timer.cumint("n_combine" + name, 1);
+                        
                         combine_tensors(my_batch.ids, i, *my_xsi);
                     }
                     my_batch.arg_nfxs[i] = my_xsi;
@@ -736,7 +742,7 @@ namespace OoC
             global_timer.stop("memtransfer");
             node->autobatch_reshape(*this, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
             global_timer.start("computation");
-            if (profiling_flag > 1)
+            if (dynet::profiling_flag > 1)
             {
                 vector<string> input_dims;
                 int i = 0;
@@ -744,7 +750,6 @@ namespace OoC
                 {
                     ostringstream o;
                     o << x->d << "@" << x->v;
-                    x->check();
                     o << my_batch.concat[i++];
                     input_dims.push_back(o.str());
                 }
@@ -760,7 +765,7 @@ namespace OoC
                 vector<Tensor *> ys;
                 for (int oid = 0; oid < functor_node->n_output; ++oid)
                     ys.push_back(&batches[oid + bid + 1].nfx);
-                if (profiling_flag > 1)
+                if (dynet::profiling_flag > 1)
                 {
                     cout << ",dim={";
                     for (auto &y : ys)
@@ -771,12 +776,13 @@ namespace OoC
             }
             else
             {
-                // cout << ",dim=" << my_batch.nfx.d << endl;
+                if (dynet::profiling_flag > 1)
+                    cout << ",dim=" << my_batch.nfx.d << endl;
                 node->forward(my_batch.arg_nfxs, my_batch.nfx);
             }
             global_timer.stop("computation");
         }
-        if (profiling_flag)
+        if (dynet::profiling_flag > 1)
             timer.stop(current_batch_name);
 
         global_timer.stop("execution");
@@ -817,12 +823,13 @@ namespace OoC
     void Block::combine_tensors(const std::vector<dynet::VariableIndex> &batch_ids,
                                 int aid, dynet::Tensor &tout)
     {
+        
         // global_timer.start("EXT combine tensors");
         // global_timer.start("EXT combine preparation");
         AlignedMemoryPool *mempool = tout.device->pools[(int)DeviceMempool::FXS];
         // Determine needed memory for tout and get list of nodes corresponding to
         // specified argument.
-        unsigned total_dsize = 0;
+        size_t total_dsize = 0;
         vector<VariableIndex> arg_nodes(batch_ids.size());
         for (unsigned i = 0; i < batch_ids.size(); ++i)
         {
@@ -830,7 +837,12 @@ namespace OoC
             total_dsize += nodes[nid]->dim.size();
             arg_nodes[i] = nid;
         }
+        DYNET_ASSERT(total_dsize <= (unsigned)(-1),
+            "ooc::block mem allocation error");
         tout.d = Dim({total_dsize});
+
+        global_timer.cumint("n_combine", 1);
+        global_timer.cumint("n_memcpy", total_dsize * sizeof(float));
         // global_timer.stop("EXT combine preparation");
 
         // allocate memory for tout
@@ -978,7 +990,9 @@ namespace OoC
             return name;
         ostringstream s;
         s << "-----------" << name << "---------" << endl;
+        s << "id: " << id << endl;
         s << "opt: " << opt << endl;
+        s << "aot_analysed: " << aot_analysed << endl;
         int idx = 0;
         for (auto node : nodes)
         {
@@ -1025,11 +1039,389 @@ namespace OoC
         s << "one_batch_size: " << one_batch_size << endl;
         s << "runtime_nodes: ";
         for (auto kv : runtime_nodes)
-            s << "(" << kv.first << "," << type2name[kv.second] << "), ";
+            s << "(" << kv.first << "," << dynet::nt::type2name[kv.second] << "), ";
         s << endl;
         s << "mem_combine: " << self_check() << endl;
+        if (aot_analysed) {
+            s << "tot_mem: " << tot_mem << endl;
+            for (int bid = 0; bid < batches.size(); bid ++){
+                vector<string> inputs;
+                auto & batch = batches[bid];
+                auto examplar = nodes[batch.ids.front()];
+                for (int aid = 0; aid < examplar->arity(); aid++){
+                    ostringstream o;
+                    size_t l, r;
+                    if (!batch.concat[aid]) {
+                        l = offsets[examplar->args[aid]] & 0xffff;
+                        r = l + nodes[examplar->args[aid]]->dim.size();
+                    }
+                    else {
+                        auto contig = batch.gathers[aid].contig;
+                        if (contig == 0 || contig == 2){
+                            l = (contig == 0)? batch.gathers[aid].dst_offset : (size_t)batch.arg_nfxs[aid]->v;
+                            r = l + batch.arg_nfxs[aid]->d.size();
+                            s << ((contig == 0)?"(R)":"(C)");
+                            s << "[" << l << "," << r << "]=Gather(";
+                            for (auto nid: batch.gathers[aid].src_ids) {
+                                s << "(" << offsets[nid] << "," << nodes[nid]->dim.size() << "),";
+                            }
+                            s << ")" << endl;
+                        }
+                        else if (contig == 1){
+                            l = offsets[batch.gathers[aid].src_ids.front()];
+                            r = l + batch.arg_nfxs[aid]->d.size();
+                        }
+                    }
+                    o << "[" << l << "," << r << "]";
+                    inputs.push_back(o.str());
+                }
+                s << "B" << bid << ":";
+                s << "[" << offsets[batch.ids.front()] << "," << offsets[batch.ids.front()] + batch.nfx.d.size() << "] = ";
+                s << examplar -> as_string(inputs);
+                s << endl;
+            }
+        }
         s << "-------------------------------------" << endl;
         return s.str();
+    }
+
+    void Block::memory_allocate_opt(int batch_size){
+        auto mempool = nodes.front()->device->pools[(int)DeviceMempool::FXS];
+        base = (float*)mempool->allocate(batch_size * tot_mem * sizeof(float));
+        if (base == nullptr) {
+            DYNET_RUNTIME_ERR("Ran out of memory when allocating FWD memory for " << name << ".");
+        }
+        for (int nid = 0; nid < nodes.size(); nid ++){
+            if (nfx_cache[nid].v == nullptr){
+                nfx_cache[nid].v = base + offsets[nid] * batch_size;
+                assert(nfx_cache[nid].v + nodes[nid]->dim.size() <= (base + batch_size * tot_mem));
+            }
+        }
+        for (int bid = n_params; bid < batches.size(); ++bid){
+            auto & my_batch = batches[bid];
+            if (my_batch.nfx.v == nullptr) {
+                my_batch.nfx.v = nfx_cache[my_batch.ids.front()].v;
+            }
+        }
+        if (dynet::profiling_flag > 1){
+            cout << "Temp Memory: " << base << ", " << base +  batch_size * tot_mem << endl;
+            for (int nid = n_params; nid < n_input; ++nid){
+                cout << "NID" << nid << ":" << nfx_cache[nid].v << "," << nfx_cache[nid].d << endl;
+            }
+            for (int bid = 0; bid < batches.size(); bid ++){
+                vector<string> inputs;
+                auto & batch = batches[bid];
+                auto examplar = nodes[batch.ids.front()];
+                for (int aid = 0; aid < examplar->arity(); aid++){
+                    ostringstream o;
+                    float *l, *r;
+                    if (!batch.concat[aid]) {
+                        l = nfx_cache[examplar->args[aid]].v;
+                        r = l + nodes[examplar->args[aid]]->dim.size();
+                    }
+                    else {
+                        int contig = batch.gathers[aid].contig;
+                        if (contig == 0 || contig == 2) {
+                            l = (contig == 0)? base + batch.gathers[aid].dst_offset * batch_size : batch.arg_nfxs[aid]->v;
+                            r = l + batch.arg_nfxs[aid]->d.size() * batch_size;
+                            cout << ((contig == 0)? "(R)":"(C)");
+                            cout << "[" << l  << "," << r << "] = Gather(";
+                            for (auto nid: batch.gathers[aid].src_ids) 
+                                cout << "(" << nfx_cache[nid].v << "," << nodes[nid]->dim.size() << "),";
+                            cout << ")" << endl;
+                        }
+                        else { // contig is 1
+                            l = nfx_cache[batch.gathers[aid].src_ids.front()].v;
+                            r = l + batch.arg_nfxs[aid]->d.size() * batch_size;
+                        }
+                    }
+                    o << "[" << l << "," << r << "]";
+                    inputs.push_back(o.str());
+                }
+                cout << "B" << bid << ":";
+                cout << "[" << batch.nfx.v << "," << batch.nfx.v + batch.nfx.d.size() * batch_size << "] = ";
+                cout << examplar -> as_string(inputs);
+                cout << endl;
+            }
+        }
+    }
+
+    void Block::execute_opt(int bid, int batch_size){
+        if (!aot_analysed) {
+            execute(bid);
+            return;
+        }
+        // gather
+        auto& my_batch = batches[bid];
+        assert(my_batch.nfx.d.bd == 1);
+        my_batch.nfx.d.bd = batch_size;
+        auto node = nodes[my_batch.ids.front()];
+        for (int aid = 0; aid < node->arity(); aid++){
+            if (!my_batch.concat[aid]) continue;
+            auto &gather = my_batch.gathers[aid];
+            auto t = const_cast<Tensor*>(my_batch.arg_nfxs[aid]);
+            t->d.bd = gather.src_ids[0] >= n_params? batch_size:1;
+            if (gather.contig == 0) {
+                t->v = base + gather.dst_offset * batch_size;
+                combine_tensors_opt(gather.src_ids, gather.lens, t, batch_size);
+            }
+            else if (gather.contig == 1){
+                t->v = nfx_cache[gather.src_ids[0]].v;
+            }
+            else {
+                // do nothing here.
+            }
+        }
+
+        // execute
+        size_t aux_size = 0;
+        Node *pseudo_node = nullptr;
+        if (my_batch.ids.size() > 1 && ((pseudo_node = node->autobatch_pseudo_node(*this, my_batch.ids)) != nullptr)) {
+            pseudo_node->device = node->device;
+            node = pseudo_node;
+            aux_size = node->aux_storage_size();
+        }
+        else {
+            for (auto nid: my_batch.ids) 
+                aux_size += nodes[nid]->aux_storage_size();
+        }
+        if (aux_size) {
+            auto mempool = node->device->pools[(int)DeviceMempool::FXS];
+            node->aux_mem = mempool->allocate(aux_size);
+        }
+        node->autobatch_reshape(*this, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
+        if (dynet::profiling_flag > 1) {
+            vector<string> input_dims;
+            int i = 0;
+            for (auto &x : my_batch.arg_nfxs)
+            {
+                ostringstream o;
+                o << x->d << "@" << x->v;
+                input_dims.push_back(o.str());
+            }
+            cout << "[" << name << "::forward] B" << bid << ": out{";
+            for (auto id : my_batch.ids)
+                cout << id << ",";
+            cout << "}@" << my_batch.nfx.d << "@" << my_batch.nfx.v << "=" << node->as_string(input_dims) << endl;
+            my_batch.nfx.check();
+            for (auto x: my_batch.arg_nfxs) x->check();
+        }
+        node->forward(my_batch.arg_nfxs, my_batch.nfx);
+        my_batch.nfx.d.bd = 1;
+    }
+
+    void Block::aot_analysis(){
+        // do not support function node
+        for (auto node: nodes) 
+            if (node->is_function){
+                std::cerr << "[Block]: doesn't support block with functor node" << endl;
+                aot_analysed = false;
+                return;
+            }
+        aot_analysed = true;
+        for (int bid = n_params; bid < (int)batches.size(); bid++){
+            auto & my_batch = batches[bid];
+            auto node = nodes[my_batch.ids.front()];
+            my_batch.concat = node->autobatch_concat(*this);
+            my_batch.nfx.device = node->device;
+            my_batch.nfx.mem_pool = DeviceMempool::FXS;
+            size_t tot_main = 0;
+            for (auto id: my_batch.ids) 
+                tot_main += nodes[id]->dim.size();
+            my_batch.nfx.d = Dim({tot_main});
+            my_batch.nfx.v = nullptr;
+        }
+        
+        // offset caculation
+        size_t offset = 0;
+        offsets.resize(nodes.size(),1000);
+        for (int nid = 0; nid < n_params; ++nid) {
+            offsets[nid] = (size_t)nfx_cache[nid].v;
+        }
+        for (auto bid: memory_allocation_order){
+            bool is_io = false;
+            for (auto& o: output_nodes) 
+                if (bid == o.bid) 
+                    is_io = true;
+            if (is_io) continue;
+            auto& my_batch = batches[bid];
+            for (auto nid: my_batch.ids){
+                offsets[nid] = offset;
+                offset += nodes[nid]->dim.size();
+            }
+        }
+        for (int bid = n_params; bid < batches.size(); ++bid) {
+            auto & my_batch = batches[bid];
+            auto examplar = nodes[my_batch.ids.front()];
+            my_batch.gathers.resize(examplar->arity());
+            my_batch.arg_nfxs.resize(examplar->arity());
+            for (int aid = 0; aid < examplar->arity(); aid++){
+                if (!my_batch.concat[aid]) {
+                    if (aid >= n_params) {
+                        throw("concat = 0 should be param node");
+                    }
+                    my_batch.arg_nfxs[aid] = &get_nfx(aid);
+                    assert(nodes[aid]->dim.bd == 1);
+                    continue;
+                }
+                Tensor* ptr = new Tensor;
+                ptr->device = examplar->device;
+                ptr->mem_pool = DeviceMempool::FXS;
+                ptr->v = nullptr;
+                size_t mem = 0;
+                for (auto nid: my_batch.ids) 
+                    mem += nodes[nodes[nid]->args[aid]]->dim.size();
+                ptr->d = Dim({mem});
+                my_batch.arg_nfxs[aid] = ptr;
+
+                auto& gather = my_batch.gathers[aid];
+                gather.src_ids.clear();
+                gather.lens.clear();
+                bool has_param, has_input, has_normal;
+                has_param = has_input = has_normal = false;
+                for (auto nid: my_batch.ids) {
+                    int arg_nid = nodes[nid]->args[aid];
+                    gather.lens.push_back(nodes[arg_nid]->dim.size());
+                    gather.src_ids.push_back(arg_nid);
+                    has_param |= (arg_nid < n_params);
+                    has_input |= (arg_nid >= n_params && arg_nid < n_input);
+                    has_normal  |= arg_nid >= n_input;
+                }
+                // if (has_param & (has_input | has_normal)) {
+                //     freezed = true;
+                //     aot_analysed = false;
+                //     cerr << as_string(true) << endl;
+                //     cerr << "my_batch:"; for (auto id: my_batch.ids) cerr << id << ","; cerr << endl;
+                //     cerr << "args:" << aid << ":"; for (auto id:my_batch.ids) cerr << nodes[id]->args[aid] << ","; cerr << endl;
+                //     cerr << "has_param,has_input,has_normal:" << has_param << "," << has_input << "," << has_normal << endl;
+                //     throw std::runtime_error("not supported arg");
+                // }
+                // necessary condition for contiguous: 100 | 010 | 001
+                gather.contig = (has_param ^ has_input ^ has_normal) & !(has_param & has_input & has_normal);
+                if (gather.contig){
+                    if (has_normal) {
+                        size_t min_offset = offsets[examplar->args[aid]];
+                        for (auto nid: my_batch.ids) {
+                            int arg_nid = nodes[nid]->args[aid];
+                            if (!(gather.contig = (min_offset == offsets[arg_nid]))) 
+                                break;
+                            min_offset += nodes[arg_nid]->dim.size();
+                        }
+                    }
+                    else if (has_param) {
+                        float* min_ptr = get_nfx(examplar->args[aid]).v;
+                        for (auto nid: my_batch.ids){
+                            if (!(gather.contig = (min_ptr == get_nfx(nodes[nid]->args[aid]).v))) 
+                                break;
+                        }
+                        // we can pre allocate memory for this computation
+                        if (opt >= 4 && !gather.contig){
+                            auto mempool = nodes.front()->device->pools[(int) DeviceMempool::PS];
+                            ptr->v = (float*)mempool->allocate(ptr->d.size() * sizeof(float));
+                            combine_tensors_opt(gather.src_ids, gather.lens, ptr, 1);
+                            gather.contig = 2;
+                        }
+                    }
+                    else if (has_input) {
+                        gather.contig = gather.src_ids.size() == 1;
+                    }
+                }
+
+                if (!gather.contig){
+                    gather.dst_offset = offset;
+                    for (auto len: gather.lens) {
+                        offset += len;
+                    }
+                }
+            }
+        }
+        tot_mem = offset;
+
+        for (int nid = n_input; nid < nodes.size(); ++nid){
+            nfx_cache[nid].v = nullptr;
+            nfx_cache[nid].d = nodes[nid]->dim;
+            nfx_cache[nid].mem_pool = DeviceMempool::FXS;
+            nfx_cache[nid].device = nodes[nid]->device;
+        }
+    }
+
+    void Block::combine_tensors_opt(
+        const std::vector<size_t>& src_ids, 
+        const std::vector<size_t>& lens, 
+        const Tensor* tout, int batch_size){
+        auto mempool = tout->device->pools[(int) DeviceMempool::FXS];
+        float* dst = tout->v;
+
+        if (profiling_flag > 1){
+            cout << "combine_tensors_opt:" << endl;
+            cout << "\tbatch_size:" << batch_size << endl;
+            cout << "\tsrc_ids:";
+            for (auto id: src_ids) cout << id << ",";
+            cout << endl;
+            cout << "\tlens:"; 
+            for (auto id: lens) cout << id << ",";
+            cout << endl;
+            cout << "\tout:" << tout->d << "," << tout->v << endl; 
+        }
+        global_timer.cumint("n_combine", 1);
+        // size_t sz = 0;
+        // for (auto l: lens) sz += l;
+        // cerr << "n_memcpy: " << (double)(sz * sizeof(float) * (size_t)batch_size) / (1 << 20) << std::endl;
+        // global_timer.cumint("n_memcpy", (double)(sz * sizeof(float) * (size_t)batch_size) / (1<<20));
+#if HAVE_CUDA
+        vector<CopyArgs> locs(src_ids.size() * 3);
+        const size_t TRG = src_ids.size();
+        const size_t LEN = src_ids.size() * 2;
+        size_t max_len = 0;
+#endif 
+        for (int i = 0; i < src_ids.size(); i++){
+            if (tout->device->type == DeviceType::CPU){
+                memcpy(dst, nfx_cache[src_ids[i]].v, batch_size * lens[i] * sizeof(float));
+            }
+#if HAVE_CUDA
+            else if (tout->device->type == DeviceType::GPU){
+                locs[i].ptr = nfx_cache[src_ids[i]].v;
+                locs[i + TRG].ptr = dst;
+                locs[i + LEN].n = lens[i] * batch_size;
+                max_len = std::max(lens[i] * batch_size, max_len);
+            }
+#endif 
+            else {
+                throw runtime_error("bad device type");
+            }
+            dst += batch_size * lens[i];
+        }
+
+        if (tout->device->type == DeviceType::GPU){
+#if HAVE_CUDA 
+            size_t req_sz = src_ids.size() * 3 * sizeof(CopyArgs);
+            void *basemem = mempool->allocate(req_sz);
+            float **srcs = static_cast<float **>(basemem);
+            float **trgs = static_cast<float **>(basemem) + TRG;
+            std::size_t *lens = static_cast<std::size_t *>(basemem) + LEN;
+            CUDA_CHECK(cudaMemcpyAsync(basemem,
+                                       &(locs)[0],
+                                       locs.size() * sizeof(CopyArgs),
+                                       cudaMemcpyHostToDevice,
+                                       static_cast<Device_GPU *>(tout->device)->estream->stream()));
+            // global_timer.stop("EXT idx transfer");
+            // global_timer.start("EXT memcpy");
+            gpu::parallel_memcpy(src_ids.size(), max_len, srcs, trgs, lens);
+#endif 
+        }
+        
+    }
+
+    std::unordered_map<std::string, int> Block::names;
+
+    int Block::autobatch_sig(SigMap& sigmap){
+        int& sig = sig_cache[&sigmap];
+        if (sig == 0) {
+            Sig s(nt::block);
+            s.add_int(id);
+            sig = sigmap.get_idx(s);
+        } 
+        return sig;
     }
 
 } // namespace OoC

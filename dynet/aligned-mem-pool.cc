@@ -2,6 +2,7 @@
 #include "dynet/devices.h"
 
 #include <sstream>
+#include <iostream>
 
 using namespace dynet;
 
@@ -41,7 +42,10 @@ void* AlignedMemoryPool::allocate(size_t n) {
     current++;
     res = pools[current]->allocate(n);
   }
-  if (res == nullptr) show_pool_mem_info();
+  if (res == nullptr) {
+    std::cerr << "try to allocate " << n << " data" << std::endl;
+    show_pool_mem_info();
+  }
   return res;
 }
 

@@ -569,6 +569,30 @@ public:
   Parameter add_parameters(const Dim& d, const ParameterInit & init,
                            const std::string & name = "", Device *device = dynet::default_device);
   /**
+   * \brief Get parameters in model, if not exist, create a new one
+   * \details creates a ParameterStorage object holding a tensor of dimension `d` and returns a Parameter object (to be used as input in the computation graph).
+   *
+   * \param d Shape of the parameter
+   * \param name Name of the parameter
+   * \param device Device placement for the parameter
+   *
+   * \return Parameter object to be used in the computation graph
+   */
+  Parameter get_parameters(const Dim& d, const std::string & name, Device *device = dynet::default_device);
+  
+  /**
+   * \brief Get parameters in model, if not exist, create a new one
+   *
+   * \param d Shape of the parameter
+   * \param init Custom initializer
+   * \param name Name of the parameter
+   * \param device Device placement for the parameter
+   *
+   * \return Parameter object to be used in the computation graph
+   */
+  Parameter get_parameters(const Dim& d, const ParameterInit & init,
+                           const std::string & name = "", Device *device = dynet::default_device);
+  /**
    * \brief Get parameters base in current model
    *
    * \return list of points to ParameterStorageBase objects
@@ -611,6 +635,32 @@ public:
    * \return LookupParameter object to be used in the computation graph
    */
   LookupParameter add_lookup_parameters(unsigned n, const Dim& d, const ParameterInit & init,
+                                        const std::string & name = "", Device *device = dynet::default_device);
+  /**
+   * \brief Get lookup parameter in the model; If does not exist, create one
+   * \details Same as add_parameters. Initializes with Glorot
+   *
+   * \param n Number of lookup indices
+   * \param d Dimension of each embedding
+   * \param name Name of the parameter
+   * \param device Device placement for the parameter
+   *
+   * \return LookupParameter object to be used in the computation graph
+   */
+  LookupParameter get_lookup_parameters(unsigned n, const Dim& d,
+                                        const std::string & name = "", Device *device = dynet::default_device);
+  /**
+   * \brief Get lookup parameter in the model; If does not exist, create one
+   *
+   * \param n Number of lookup indices
+   * \param d Dimension of each embedding
+   * \param init Custom initializer
+   * \param name Name of the parameter
+   * \param device Device placement for the parameter
+   *
+   * \return LookupParameter object to be used in the computation graph
+   */
+  LookupParameter get_lookup_parameters(unsigned n, const Dim& d, const ParameterInit & init,
                                         const std::string & name = "", Device *device = dynet::default_device);
   /**
    * \brief Get lookup parameter in current model

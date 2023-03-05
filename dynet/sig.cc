@@ -39,6 +39,7 @@ namespace dynet
             {acos, "acos"},
             {atan, "atan"},
             {plus_const, "plus_const"},
+            {minus_const, "minus_const"},
             {concat, "concat"},
             {cmult, "cmult"},
             {csum, "csum"},

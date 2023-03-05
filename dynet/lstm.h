@@ -232,7 +232,8 @@ struct VanillaLSTMBuilder : public RNNBuilder {
                               ParameterCollection& model,
                               bool ln_lstm = false,
                               float forget_bias = 1.f,
-                              bool blocked = dynet::blocked);
+                              bool blocked = dynet::blocked,
+                              std::string name = "");
 
   Expression back() const override { return (cur == -1 ? h0.back() : h[cur].back()); }
   Expression back_c() const {return c.size() == 0? c0.back():c.back().back();}
@@ -343,7 +344,9 @@ public:
   bool blocked;
 
 private:
-  static std::unordered_map<params_t, std::shared_ptr<OoC::Block>, params_hash> bb_gates;
+  static std::unordered_set<std::string> names;
+  std::string name;
+  std::unordered_map<params_t, std::shared_ptr<OoC::Block>, params_hash> bb_gates;
   ComputationGraph* _cg; // Pointer to current cg
   // OoC::SuperNode * bb_affine, *bb_gates;
 };

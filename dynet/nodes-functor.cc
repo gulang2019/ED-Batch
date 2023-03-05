@@ -12,9 +12,7 @@ namespace dynet{
 #ifndef __CUDACC__
 
 int FunctorNode::autobatch_sig(const ComputationGraph& cg, SigMap &sm) const {
-    Sig s(nt::block);
-    s.add_int(block->id);
-   return sm.get_idx(s);
+    return block->autobatch_sig(sm);
 }
 
 Node* FunctorNode::autobatch_pseudo_node(
@@ -47,15 +45,16 @@ vector<int> FunctorNode::autobatch_concat(const ComputationGraph & cg) const {
 
 string FunctorNode::as_string(const vector<string>& args) const {
     ostringstream s;
-    s << "FunctorNode(n_output=" << n_output << ", lookup_indices = {";
-    for (auto & lookup_index: lookup_indices) {
-        s << "{";
-        for (auto idx: lookup_index) s << idx << ",";
-        s << "},";
-    }
-    s << "},inputs= {";
-    for(auto arg: args) s << arg << ",";
-    s << "},block="<< block->as_string() << ")";
+    s << block->as_string();
+    // s << "FunctorNode(n_output=" << n_output << ", lookup_indices = {";
+    // for (auto & lookup_index: lookup_indices) {
+    //     s << "{";
+    //     for (auto idx: lookup_index) s << idx << ",";
+    //     s << "},";
+    // }
+    // s << "},inputs= {";
+    // for(auto arg: args) s << arg << ",";
+    // s << "},block="<< block->as_string() << ")";
     return s.str();
 }
 
@@ -71,9 +70,9 @@ Dim FunctorNode::dim_forward(const vector<Dim>& xs) const {
 }
 
 void FunctorNode::forward(const std::vector<const Tensor*>&xs, std::vector<Tensor*>& ys) const {
-    global_timer.stop("computation");
+    global_timer.start("latency");
     block->forward(xs, ys, lookup_indices, batch_size);
-    global_timer.start("computation");
+    global_timer.stop("latency"); 
 }
 
 void FunctorNode::forward_impl(const std::vector<const Tensor*>& xs, Tensor& fx) const {

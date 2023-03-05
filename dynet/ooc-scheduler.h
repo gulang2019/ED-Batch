@@ -18,6 +18,8 @@ using dynet::VariableIndex;
 using std::vector;
 using std::queue;
 
+#define NITER (1000)
+
 namespace OoC{
     struct node_t
     {
@@ -87,9 +89,10 @@ namespace OoC
         /**
          * \return 0: done; 1: okay, -1: continue
          */
-        virtual int schedule(vector<VariableIndex> &batch) = 0;
-        virtual void init(ComputationGraph *cg, VariableIndex upto) = 0;
+        virtual int schedule(vector<VariableIndex> &batch, int verbose = 0) = 0;
+        virtual void init(ComputationGraph *cg, VariableIndex num_nodes_evaluated, VariableIndex upto) = 0;
         virtual void post_process() {}
+        int lower_bound();
 
     protected:
         vector<int> node2type;
@@ -101,14 +104,14 @@ namespace OoC
         void typewise_init();
 
         ComputationGraph *cg;
-        VariableIndex upto;
+        VariableIndex num_nodes_evaluated, upto;
     };
 
     class AgendaScheduler : public BaseScheduler
     {
     public:
-        int schedule(vector<VariableIndex> &batch) override;
-        void init(ComputationGraph *cg, VariableIndex upto) override;
+        int schedule(vector<VariableIndex> &batch, int verbose) override;
+        void init(ComputationGraph *cg, VariableIndex num_nodes_evaluated, VariableIndex upto) override;
 
     private:
         vector<int> node2depth;
@@ -122,12 +125,12 @@ namespace OoC
     class RLScheduler : public BaseScheduler
     {
     public:
-        int schedule(vector<VariableIndex> &batch) override;
-        void init(ComputationGraph *cg, VariableIndex upto) override;
+        int schedule(vector<VariableIndex> &batch, int verbose) override;
+        void init(ComputationGraph *cg, VariableIndex num_nodes_evaluated, VariableIndex upto) override;
         void post_process() override;
 
     private:
-        int schedule_impl(vector<VariableIndex>& batch, bool train);
+        int schedule_impl(vector<VariableIndex>& batch, bool train, int verbose);
         inline int take_action(const vector<int>& state, bool train);
         static std::unordered_map<int, TupleDict<RL::q_table_t> > q_tables;
         vector<vector<VariableIndex> > type2frontiers;
@@ -135,7 +138,7 @@ namespace OoC
         vector<int> arity, typewise_arity;
         static std::unordered_set<int> trained;
         void train();
-        double inference();
+        int inference();
         struct log_t
         {
             vector<int> state;
@@ -145,7 +148,7 @@ namespace OoC
         vector<log_t> logs;
         queue<int> get_batches;
  
-        int n_iter = 1000;
+        int n_iter = NITER;
         double alpha = 0.4;
         double gamma = 1.0;
         double eps_max = 0.5;
@@ -275,7 +278,7 @@ namespace OoC
             OoC::TupleDict<RL::q_table_t> q_tables;
 
             int take_action(const state_t &state, bool train = false);
-            void train(Env *env, int iter = 1000);
+            void train(Env *env, int iter = NITER);
             int inference(Env *env);
             int typewise_inference(Env *env);
 
@@ -298,7 +301,7 @@ namespace OoC
         {
             PreMallocLearner(DBLearner &policy) : policy(policy) {}
             bool take_action(int state, bool train = false);
-            void train(Env *env, int iter = 1000);
+            void train(Env *env, int iter = NITER);
             double inference(Env *env);
             std::unordered_map<int, q_table_t> q_tables;
             DBLearner &policy;

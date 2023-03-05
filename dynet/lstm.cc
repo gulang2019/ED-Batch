@@ -315,14 +315,15 @@ enum { LN_GH, LN_BH, LN_GX, LN_BX, LN_GC, LN_BC};
 
 VanillaLSTMBuilder::VanillaLSTMBuilder() : has_initial_state(false), layers(0), input_dim(0), hid(0), dropout_rate_h(0), ln_lstm(false), forget_bias(1.f), dropout_masks_valid(false) { }
 
-std::unordered_map<params_t, std::shared_ptr<OoC::Block>, params_hash> VanillaLSTMBuilder::bb_gates;
+unordered_set<string> VanillaLSTMBuilder::names;
 
 VanillaLSTMBuilder::VanillaLSTMBuilder(unsigned layers,
                                        unsigned input_dim,
                                        unsigned hidden_dim,
                                        ParameterCollection& model,
                                        bool ln_lstm, float forget_bias,
-                                       bool blocked) : layers(layers), input_dim(input_dim), hid(hidden_dim), ln_lstm(ln_lstm), forget_bias(forget_bias), dropout_masks_valid(false), blocked(blocked) {
+                                       bool blocked, string name) 
+: layers(layers), input_dim(input_dim), hid(hidden_dim), ln_lstm(ln_lstm), forget_bias(forget_bias), dropout_masks_valid(false), blocked(blocked), name(name) {
   unsigned layer_input_dim = input_dim;
   local_model = model.add_subcollection("vanilla-lstm-builder");
   for (unsigned i = 0; i < layers; ++i) {
@@ -351,6 +352,11 @@ VanillaLSTMBuilder::VanillaLSTMBuilder(unsigned layers,
   dropout_rate = 0.f;
   dropout_rate_h = 0.f;
 
+
+  if (names.count(name))
+    cerr << "[WARNING]: define a duplicate VanillaLSTMBuilder named " << name << endl; 
+  names.insert(name);
+
   if (blocked) {
     if (ln_lstm){
       throw std::runtime_error("not implemented!");
@@ -359,13 +365,18 @@ VanillaLSTMBuilder::VanillaLSTMBuilder(unsigned layers,
     {
       blocks.push_back({});
       for (unsigned layer = 0; layer < layers; layer++){
-        params_t param({input_dim, hidden_dim, ln_lstm, has_prev_state, layer});
+        params_t param({layer? hidden_dim:input_dim, hidden_dim, ln_lstm, has_prev_state, layer});
         if (bb_gates.count(param) == 0){
           cout << "[VanillaLSTM]: build instance for ";
-          cout << "input_dim: " << input_dim << ", hidden_dim:" << hidden_dim << "ln_lstm:" << ln_lstm << ",has_prev_state:" << has_prev_state << ",layer:" << layer << endl;
-          bb_gates[param]= make_shared<OoC::Block>("lstm_update"+to_string(bb_gates.size()));
+          cout << "input_dim: " << input_dim << ", hidden_dim:" << hidden_dim << "ln_lstm:" << ln_lstm << ",has_prev_state:" << has_prev_state << ",layer:" << layer << endl;  
+          bb_gates[param]= make_shared<OoC::Block>("lstm_update-"+ name 
+                                                  + "-" + to_string(has_prev_state)
+                                                  + "-" + to_string(layer)
+                                                  + "-" + to_string(bb_gates.size()));
           OoC::Block& block = *bb_gates[param];
-          vector<Expression> ln_vars;
+          vector<Expression> vars, ln_vars;
+          for (auto& w: params[layer]) 
+            vars.push_back(parameter(block, w));
           if (ln_lstm){
             auto& ln_p = ln_params[layer];
             for (unsigned j = 0; j < ln_p.size(); ++j) { 
@@ -373,10 +384,29 @@ VanillaLSTMBuilder::VanillaLSTMBuilder(unsigned layers,
             }
           }
           block.finish_params();
-          Expression tmp = block.placeholder({{hid*4}}, "affine");
-          Expression i_c_tm1;
-          if (has_prev_state) i_c_tm1 = block.placeholder({{hid}}, "c_tm1");
+
+          Expression i_h_tm1, i_c_tm1, in;
+          in = block.placeholder({layer? hidden_dim:input_dim}, "x");
+          i_h_tm1 = block.placeholder({hidden_dim}, "h");
+          i_c_tm1 = block.placeholder({hidden_dim}, "c");
           block.finish_input();
+          // input
+          Expression tmp;
+          if (ln_lstm){
+            if (has_prev_state)
+              tmp = vars[_BI] + layer_norm(vars[_X2I] * in, ln_vars[LN_GX], ln_vars[LN_BX]) 
+                + layer_norm(vars[_H2I] * i_h_tm1, ln_vars[LN_GH], ln_vars[LN_BH]);
+            else
+              tmp = vars[_BI] + layer_norm(vars[_X2I] * in, ln_vars[LN_GX], ln_vars[LN_BX]);
+          }else{
+            if (has_prev_state)
+              // tmp = affine_transform({vars[_BI], vars[_X2I], in, vars[_H2I], i_h_tm1});
+              tmp = vars[_BI] + matmul(vars[_X2I], in, false) + matmul(vars[_H2I], i_h_tm1, false);
+            else
+              // tmp = affine_transform({vars[_BI], vars[_X2I], in});
+              tmp = vars[_BI] + matmul(vars[_X2I], in, false);
+          }          
+
           Expression i_ait, i_aft, i_aot, i_agt;
           i_ait = pick_range(tmp, 0, hid);
           i_aft = pick_range(tmp, hid, hid * 2);
@@ -543,7 +573,6 @@ Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
   Expression in = x;
   if ((dropout_rate > 0.f || dropout_rate_h > 0.f) && !dropout_masks_valid) set_dropout_masks(x.dim().bd);
   for (unsigned i = 0; i < layers; ++i) {
-    const vector<Expression>& vars = param_vars[i];
     Expression i_h_tm1, i_c_tm1;
     bool has_prev_state = (prev >= 0 || has_initial_state);
     if (prev < 0) {
@@ -567,37 +596,30 @@ Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
       i_h_tm1 = cmult(i_h_tm1, masks[i][1]);
     }
     
-    // vector<Expression> ret;
-    // ret = bb_affine->operator()({in, i_c_tm1}, {(int)i, (int)has_prev_state}, {}, true);
-    // assert(ret.size() == 1);
-    // Expression tmp = ret[0];
-    // ret = bb_gates->operator()({tmp, i_c_tm1}, {(int)i, (int)has_prev_state}, {}, true);
-    // assert(ret.size() == 2);
-    // ct[i] = ret[0];
-    // in = ht[i] = ret[1];
-    
     // input
-    Expression tmp;
-    if (ln_lstm){
-      const vector<Expression>& ln_vars = ln_param_vars[i];
-      if (has_prev_state)
-        tmp = vars[_BI] + layer_norm(vars[_X2I] * in, ln_vars[LN_GX], ln_vars[LN_BX]) + layer_norm(vars[_H2I] * i_h_tm1, ln_vars[LN_GH], ln_vars[LN_BH]);
-      else
-        tmp = vars[_BI] + layer_norm(vars[_X2I] * in, ln_vars[LN_GX], ln_vars[LN_BX]);
-    }else{
-      if (has_prev_state)
-        // tmp = affine_transform({vars[_BI], vars[_X2I], in, vars[_H2I], i_h_tm1});
-        tmp = vars[_BI] + matmul(vars[_X2I], in, false) + matmul(vars[_H2I], i_h_tm1, false);
-      else
-        // tmp = affine_transform({vars[_BI], vars[_X2I], in});
-        tmp = vars[_BI] + matmul(vars[_X2I], in, false);
-    }
-    if (blocked){
-      Expression o = has_prev_state? blocks[has_prev_state][i]->operator()(_cg, {{"affine", tmp}, {"c_tm1", i_c_tm1}}, {}):
-        blocks[has_prev_state][i]->operator()(_cg, {{"affine", tmp}}, {});
+    
+    if (dynet::blocked){
+      Expression o = blocks[has_prev_state][i]->operator()(
+        _cg, {{"x", in}, {"h", i_h_tm1}, {"c", i_c_tm1}}, {});
       in = ht[i] = o[0], ct[i] = o[1];
     }
     else {
+      const vector<Expression>& vars = param_vars[i];
+      Expression tmp;
+      if (ln_lstm){
+        const vector<Expression>& ln_vars = ln_param_vars[i];
+        if (has_prev_state)
+          tmp = vars[_BI] + layer_norm(vars[_X2I] * in, ln_vars[LN_GX], ln_vars[LN_BX]) + layer_norm(vars[_H2I] * i_h_tm1, ln_vars[LN_GH], ln_vars[LN_BH]);
+        else
+          tmp = vars[_BI] + layer_norm(vars[_X2I] * in, ln_vars[LN_GX], ln_vars[LN_BX]);
+      }else{
+        if (has_prev_state)
+          // tmp = affine_transform({vars[_BI], vars[_X2I], in, vars[_H2I], i_h_tm1});
+          tmp = vars[_BI] + matmul(vars[_X2I], in) + matmul(vars[_H2I], i_h_tm1);
+        else
+          // tmp = affine_transform({vars[_BI], vars[_X2I], in});
+          tmp = vars[_BI] + matmul(vars[_X2I], in);
+      }
       Expression i_ait;
       Expression i_aft;
       Expression i_aot;

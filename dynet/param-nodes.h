@@ -82,10 +82,10 @@ struct ScalarInputNode : public Node {
 
 // represents a matrix/vector embedding of an item of a discrete set (1-hot coding)
 struct LookupNode : public ParameterNodeBase {
-  LookupNode(LookupParameter p, unsigned ind) : dim(p.get_storage().dim), index(ind), pindex(&index), indices(), pindices(), params(p) {}
-  LookupNode(LookupParameter p, const unsigned* pind) : dim(p.get_storage().dim), index(), pindex(pind), indices(), pindices(), params(p) {}
-  LookupNode(LookupParameter p, const std::vector<unsigned>& indices) : dim(p.get_storage().dim), index(), pindex(), indices(indices), pindices(&this->indices), params(p) { dim.bd = pindices->size(); }
-  LookupNode(LookupParameter p, const std::vector<unsigned>* pindices) : dim(p.get_storage().dim), index(), pindex(), indices(), pindices(pindices), params(p) { dim.bd = pindices->size(); }
+  LookupNode(LookupParameter p, unsigned ind) : index(ind), pindex(&index), indices(), pindices(), params(p) {}
+  LookupNode(LookupParameter p, const unsigned* pind) : index(), pindex(pind), indices(), pindices(), params(p) {}
+  LookupNode(LookupParameter p, const std::vector<unsigned>& indices) : index(), pindex(), indices(indices), pindices(&this->indices), params(p) { dim.bd = pindices->size(); }
+  LookupNode(LookupParameter p, const std::vector<unsigned>* pindices) : index(), pindex(), indices(), pindices(pindices), params(p) { dim.bd = pindices->size(); }
   DYNET_NODE_DEFINE_DEV_IMPL()
   virtual bool supports_multibatch() const override { return true; }  
   virtual int autobatch_sig(const ComputationGraph &cg, SigMap &sm) const override;
@@ -101,7 +101,7 @@ struct LookupNode : public ParameterNodeBase {
   }
   size_t aux_storage_size() const override;
   void accumulate_grad(const Tensor& g) override;
-  Dim dim;
+  // Dim dim;
   unsigned index;
   const unsigned* pindex;
   std::vector<unsigned> indices;

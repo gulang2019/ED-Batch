@@ -260,6 +260,7 @@ namespace dynet
 
     void ComputationGraph::show_nodes(){
         // if (profiling_flag < 2) return;
+        cout << "-------------------Show Nodes--------------------" << endl;
         int nid = 0;
         for (auto node: nodes){
             vector<string>args;
@@ -267,6 +268,7 @@ namespace dynet
             cout << "[node " << nid << ","<<node->dim << "]: " << node->as_string(args) << endl;
             nid++;
         }
+        cout << "----------------Show Nodes End-------------------" << endl;
     }
 
     // OoC's extension to dynet's computation graph

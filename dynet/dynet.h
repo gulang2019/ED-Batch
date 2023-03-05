@@ -541,6 +541,10 @@ struct ComputationGraph {
    * \brief the batch sequence 
    */ 
   static void dump_batch_sequence(std::string filename);
+  /**
+   * \brief visualize the graph
+   */ 
+  void visualize(std::string filename);
 
   static std::unordered_map<int, std::vector<std::vector<int> > > batch_sequences;
 

@@ -51,7 +51,8 @@ struct Expression {
   std::string get_device_name() const;
 
   const bool is_stale() const {
-    return (get_number_of_active_graphs() != 1 || graph_id != get_current_graph_id());
+    return false;
+    // return (get_number_of_active_graphs() != 1 || graph_id != get_current_graph_id());
   }
 
   /**

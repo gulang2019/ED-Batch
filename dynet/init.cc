@@ -146,6 +146,17 @@ DynetParams extract_dynet_params(int& argc,
       }
     }
 
+    else if (startswith(arg, "--block-opt") ||
+             startswith(arg, "--block_opt")) {
+      if (!has_arg(argi, argc, argv)) {
+        throw std::invalid_argument("[ooc] --block-opt expects an argument (0 for none 1 for on)");
+      } else { 
+        string a2 = get_arg(argi, argv);
+        istringstream c(a2); c >> params.block_opt_flag;
+        remove_args(argc, argv, argi, 2);
+      }
+    }
+
     // Profiling
     else if (startswith(arg, "--dynet-profiling") ||
              startswith(arg, "--dynet_profiling")) {
@@ -309,6 +320,10 @@ void initialize(DynetParams& params) {
   if (params.ooc_autobatch) 
     cerr << "[ooc] using autobatching" << endl;
   ooc_autobatch_flag = params.ooc_autobatch;
+
+  if (params.block_opt_flag)
+    cerr << "[ooc] using block opt level " << params.block_opt_flag << endl;
+  block_opt_flag = params.block_opt_flag;
   
   if(params.profiling)
     cerr << "[dynet] using profiling level " << params.profiling << endl;

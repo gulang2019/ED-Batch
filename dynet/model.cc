@@ -348,6 +348,28 @@ Parameter ParameterCollection::add_parameters(const Dim& d, const ParameterInit 
   }
 }
 
+Parameter ParameterCollection::get_parameters(const Dim & d, const std::string & p_name, Device *device) {
+  return add_parameters(d, ParameterInitGlorot(), p_name, device);
+}
+
+Parameter ParameterCollection::get_parameters(const Dim& d, const ParameterInit & init,
+                                              const std::string & p_name, Device *device) {
+  if (p_name.size() == 0)
+    throw ("empty name is not allowed for get_parameters");
+  if (valid_parameter(p_name)) {
+    if (name_cntr[p_name] == 0) return add_parameters(d, init, p_name, device);
+    ostringstream oss; oss << name << p_name;
+    for (auto & param : get_storage().params) {
+      if (param->name == oss.str()) {
+        return Parameter(param);
+      }
+    }
+  } else {
+    throw std::runtime_error("LookupParameter name could not include '/' and '_'");
+  }
+  throw std::runtime_error("LookupParameter not found");
+}
+
 void ParameterCollection::add_parameters_to_storage(std::shared_ptr<ParameterStorage>p) {
   if(parent != nullptr)
     parent->add_parameters_to_storage(p);
@@ -429,6 +451,31 @@ LookupParameter ParameterCollection::add_lookup_parameters(unsigned n, const Dim
   } else {
     throw std::runtime_error("LookupParameter name could not include '/' and '_'");
   }
+}
+
+LookupParameter ParameterCollection::get_lookup_parameters(unsigned n, const Dim& d,
+                                                           const std::string & p_name,
+                                                           Device *device) {
+  return get_lookup_parameters(n, d, ParameterInitGlorot(true), p_name, device);
+}
+
+LookupParameter ParameterCollection::get_lookup_parameters(unsigned n, const Dim& d, const ParameterInit & init,
+                                                           const std::string & p_name,
+                                                           Device *device) {
+  if (p_name.size() == 0)
+    throw ("empty name is not allowed for get_lookup_parameters");
+  if (valid_parameter(p_name)) {
+    if (name_cntr[p_name] == 0) return add_lookup_parameters(n, d, init, p_name, device);
+    ostringstream oss; oss << name << p_name;
+    for (auto & lookup_param : get_storage().lookup_params) {
+      if (lookup_param->name == oss.str()) {
+        return LookupParameter(lookup_param);
+      }
+    }
+  } else {
+    throw std::runtime_error("LookupParameter name could not include '/' and '_'");
+  }
+  throw std::runtime_error("LookupParameter not found");
 }
 
 void ParameterCollection::add_lookup_parameters_to_storage(std::shared_ptr<LookupParameterStorage>p) {

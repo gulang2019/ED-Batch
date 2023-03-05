@@ -22,6 +22,7 @@ struct DynetParams {
   float weight_decay; /**< Weight decay rate for L2 regularization */
   int autobatch; /**< Whether to autobatch or not */
   int ooc_autobatch; /**<Whether to enable autobatch of OoC */
+  int block_opt_flag; /**<opt level for functor node */
   int profiling; /**< Whether to show autobatch debug info or not */
   bool shared_parameters; /**< TO DOCUMENT */
   bool ngpus_requested; /**< GPUs requested by number */

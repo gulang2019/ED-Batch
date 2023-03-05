@@ -3,6 +3,7 @@
 #include "dynet/expr.h"
 #include "dynet.h"
 #include "utils.h"
+#include "globals.h"
 #include <iostream>
 
 namespace OoC
@@ -60,25 +61,48 @@ namespace OoC
         };
         std::vector<lookup_arg_t> lookup_args;
     };
+
+    struct gather_t{
+        size_t dst_offset;
+        /**
+         * 0: not contiguous, need runtime memory combine;
+         * 1: contiguous;
+         * 2: ont contiguous, but is ready at compile time;
+         */
+        int contig;
+        std::vector<size_t> src_ids;
+        std::vector<size_t> lens;
+    }; 
+    
     struct BatchInfo
     {
+        BatchInfo() {}
         dynet::Tensor nfx;
+        std::vector<gather_t> gathers;
         std::vector<dynet::VariableIndex> ids;
         std::vector<int> concat;
-        dynet::Node *pseudo_node;
+        dynet::Node *pseudo_node = nullptr;
         std::vector<const dynet::Tensor *> arg_nfxs;
-        bool pre_alloc = false;
-        ~BatchInfo() {}
     };
     struct Block : public dynet::ComputationGraph
     {
         // default constructor
-        Block(): dynet::ComputationGraph(nullptr), id(block_id), 
-        name("block"+std::to_string(block_id)), opt(dynet::autobatch_flag >= 4) {
-            block_id ++;
+        Block(): dynet::ComputationGraph(nullptr),
+        name("block"+std::to_string(names.size())), opt(dynet::block_opt_flag) {
+            if (names.count(name) == 0) {
+                names[name] = names.size();
+            }
+            else std::cerr << "[WARNING] define a block with duplicated name " << name << std::endl;
+            id = names[name];
         }
-        Block(std::string name): dynet::ComputationGraph(nullptr), id(block_id++), 
-        name(name) {}
+        Block(std::string name): dynet::ComputationGraph(nullptr), 
+        name(name), opt(dynet::block_opt_flag) {
+            if (names.count(name) == 0) {
+                names[name] = names.size();
+            }
+            else std::cerr << "[WARNING] define a block with duplicated name " << name << std::endl;
+            id = names[name];
+        }
         // get input from an dynet::Expression
         dynet::Expression placeholder(const dynet::Dim &d, std::string name);
         // finish params
@@ -106,6 +130,19 @@ namespace OoC
 
         std::string as_string(bool verbose = false);
 
+
+        float* base = nullptr;
+        size_t tot_mem;
+        std::vector<size_t> offsets;
+        std::unordered_map<dynet::SigMap*, int> sig_cache;
+        int autobatch_sig(dynet::SigMap& sig);
+        void memory_allocate_opt(int batch_size);
+        void execute_opt(int bid, int batch_size);
+        void combine_tensors_opt(const std::vector<size_t>& src_ids, const std::vector<size_t>& lens, const dynet::Tensor* tout, int batch_size);
+        bool aot_analysed = false;
+        void aot_analysis(); 
+
+        // the identifier for type
         int id;
         // <nid, bid> pair of output node
         int n_input = -1;
@@ -124,11 +161,12 @@ namespace OoC
         std::vector<std::pair<int, dynet::nt::NodeType> > runtime_nodes;
         std::vector<int> autobatch_concat;
 
-        static int block_id;
+        static std::unordered_map<std::string, int> names;
         std::string name;
         bool freezed = false;
 
         std::vector<BatchInfo> batches;
+        // vector<bid>: the order for memory allocation
         std::vector<int> memory_allocation_order;
         // the unique snode id;
         // the relative memory offset in a batch
@@ -153,6 +191,12 @@ namespace OoC
         int memo_block_type = -1;
         int memo_get_type = -1;
 
-        bool opt; // whether optimization like PQTree is on.
+        /**
+         * 0: dynet batching & mem allocation
+         * 1: PQTree batching & mem allocation 
+         * 2: dynet batching & mem allocation & aot analysis
+         * 3: PQTree batching & mem allocation & aot analysis
+         */ 
+        int opt; // whether optimization like PQTree is on.
     };
 } // namespace OoC

@@ -24,8 +24,8 @@ namespace OoC
 
     void Executor::init()
     {
-        batches.clear();
-        memory_blocks.clear();
+        // batches.clear();
+        // memory_blocks.clear();
     }
 
     const Tensor &Executor::forward()
@@ -66,6 +66,9 @@ namespace OoC
 
     const Tensor &Executor::incremental_forward(VariableIndex upto)
     {
+        if (upto < num_nodes_evaluated) 
+            return get_nfx(upto);
+
         init();
         
         if (cg.nodes[upto]->is_get)
@@ -80,7 +83,7 @@ namespace OoC
         node2offset.resize(upto + 1);
         node2size.resize(upto + 1);
         node2batch.resize(upto+1);
-        for (int nid = 0; nid < (int)cg.nodes.size(); ++nid)
+        for (int nid = num_nodes_evaluated; nid <= upto; ++nid)
             node2size[nid] = cg.nodes[nid]->dim.size();
 
         BaseScheduler *scheduler = nullptr;
@@ -92,16 +95,21 @@ namespace OoC
             throw("bad ooc_autobatch_flag");
 
         global_timer.start("scheduling");
-        scheduler->init(&cg, upto);
+        scheduler->init(&cg, num_nodes_evaluated, upto);
         global_timer.stop("scheduling");
-        VariableIndex batch_id = 0;
+        VariableIndex batch_id = num_batches_evaluated;
+        
+        if (dynet::profiling_flag){
+            cout << "[OoC::executor] policy " << ooc_autobatch_flag << "; " << num_nodes_evaluated << ":" << upto << endl;
+        }
+
         while (true)
         {
             int suc = -1;
             global_timer.start("scheduling");
             while(suc == -1){
                 batches.push_back({});
-                suc = scheduler->schedule(batches.back().ids);
+                suc = scheduler->schedule(batches.back().ids, dynet::profiling_flag);
             }
             global_timer.stop("scheduling");
             if (!suc){
@@ -120,13 +128,19 @@ namespace OoC
             batch_id = batches.size();
         }
         scheduler->post_process();
-        global_timer.cumint("n_kernels", batch_id);
-        cout << "[OoC::Executor]: batch_strategy" << ooc_autobatch_flag << ":" << batch_id << "kernels" << endl;
+        // global_timer.log("n_kernel", batch_id);
+        global_timer.cumint("n_kernels", batch_id - num_batches_evaluated);
+        global_timer.cumint("n_node", upto+1-num_nodes_evaluated);
+        // cerr << "[OoC::Executor " << num_nodes_evaluated << ":" << upto 
+        //     <<  "]: batch_strategy" << ooc_autobatch_flag << ":" 
+        //     << batch_id - num_batches_evaluated << "kernels" << endl;
         global_timer.start("execution");
         auto &t = get_nfx(upto);
         global_timer.stop("execution");
 
         as_vector(t);
+        num_nodes_evaluated = upto + 1;
+        num_batches_evaluated = batch_id;
         return t;
     }
 
@@ -281,7 +295,8 @@ namespace OoC
             // cout << "}=" << node->as_string(inputs) << endl;
 
             global_timer.start("computation");
-            global_timer.lock();
+            string old_scope = global_timer.scope_tag;
+            global_timer.scope(old_scope + "-block");
             if (node->is_function)
             {
                 FunctorNode *functor_node = static_cast<FunctorNode *>(node);
@@ -299,7 +314,7 @@ namespace OoC
                 node->forward(xs, my_batch.nfx);
             }
 
-            global_timer.unlock();
+            global_timer.scope(old_scope);
             global_timer.stop("computation");
         }
         else
@@ -378,7 +393,8 @@ namespace OoC
             global_timer.stop("memtransfer");
             node->autobatch_reshape(cg, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
             global_timer.start("computation");
-            global_timer.lock();
+            string old_scope = global_timer.scope_tag;
+            global_timer.scope(old_scope + "-block");
             // vector<string> input_dims;
             // for (auto& x: my_batch.arg_nfxs) {
             //     ostringstream o;
@@ -405,7 +421,7 @@ namespace OoC
                 // cout << "dim=" << my_batch.nfx.d << endl;
                 node->forward(my_batch.arg_nfxs, my_batch.nfx);
             }
-            global_timer.unlock();
+            global_timer.scope(old_scope);
             global_timer.stop("computation");
             // cerr << "batched forward[" << num_batches_evaluated << "] (nodes:"; for(auto id : my_batch.ids) cerr << ' ' << id; cerr << ") == " << print_vec(as_vector(my_batch.nfx)) << endl;
         } // execute a batch node (not a single instance node)
@@ -447,15 +463,16 @@ namespace OoC
         AlignedMemoryPool *mempool = tout.device->pools[(int)DeviceMempool::FXS];
         // Determine needed memory for tout and get list of nodes corresponding to
         // specified argument.
-        unsigned total_dsize = 0;
+        size_t total_dsize = 0;
         vector<VariableIndex> arg_nodes(batch_ids.size());
         for (unsigned i = 0; i < batch_ids.size(); ++i)
         {
             const auto nid = cg.nodes[batch_ids[i]]->args[aid];
-            total_dsize += cg.nodes[nid]->dim.size();
+            total_dsize += node2size[nid];
             arg_nodes[i] = nid;
         }
-        tout.d = Dim({total_dsize});
+        DYNET_ASSERT(total_dsize <= (unsigned)(-1), "mem size violated");
+        tout.d = Dim({(unsigned)total_dsize});
         // global_timer.stop("EXT combine preparation");
 
         // allocate memory for tout
@@ -474,6 +491,8 @@ namespace OoC
             dest = static_cast<float *>(mempool->allocate(total_dsize * sizeof(float)));
             memory_blocks.push_back({dest, total_dsize, false});
         }
+        DYNET_ASSERT(dest != nullptr,
+            "memory exceeded when allocate " << total_dsize << " for " << aid);
         // global_timer.stop("EXT combined allocation");
         // global_timer.start("EXT prepare args");
 
@@ -488,8 +507,7 @@ namespace OoC
         // copy
         for (const auto id : arg_nodes)
         {
-            const size_t sz = cg.nodes[id]->dim.size();
-
+            const size_t sz = node2size[id];
             float *my_src = get_nfx(id).v;
             if (tout.device->type == DeviceType::CPU)
             {
@@ -544,4 +562,60 @@ namespace OoC
         // global_timer.stop("EXT combine tensors");
     }
 
+    void Executor::visualize(string filename) {
+        ofstream file;
+        file.open(filename);
+        file << "digraph G {\n";
+        file << "\tnode [style=filled]\n";
+        function<string(int)> getName = [&](int nid)
+        {
+            auto node = cg.nodes[nid];
+            string ret =  nt::type2name[cg.sigmap.sig2type(node->autobatch_sig(cg, cg.sigmap))] + "_" + to_string(nid);
+            return ret;
+        };
+
+        for (int j = 0; j < (int)cg.nodes.size(); j++)
+        {
+            const Node *node = cg.nodes[j];
+            auto sig = node->autobatch_sig(cg, cg.sigmap);
+            if (sig == 0)
+                continue;
+            string node_str = getName(j);
+            for (auto arg : node->args)
+            {
+                string from_str = getName(arg);
+                file << "\t" << from_str << "->" << node_str;
+                file << endl;
+            }
+        }
+
+        unordered_map<int, string> bid2color;
+        unordered_map<int, string> type2color;
+        for (int nid = 0; nid < (int)cg.nodes.size(); nid++)
+        {
+            int bid = node2batch[nid];
+            if (bid2color.count(bid) == 0)
+            {
+                char tmp[10];
+                sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
+                bid2color[bid] = string(tmp);
+            }
+            int type = cg.nodes[nid]->autobatch_sig(cg, cg.sigmap);
+            if (type2color.count(type) == 0)
+            {
+                char tmp[10];
+                sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
+                type2color[type] = string(tmp);
+            }
+            file << "\t" << getName(nid) << "\t[color=\""  << bid2color[bid] << "\"];\n";
+            // file << "\t" << getName(nid) << "\t[color=\"" << bid2color[bid] << "\",fillcolor=\"" << type2color[type] << "\", penwidth=10];\n";
+        }
+
+        file << "}\n";
+        file.close();
+
+        string cmd = "dot -Tpng " + filename + " -o " + filename + ".png"; 
+        system(cmd.c_str()); 
+        return;
+    }
 } // namespace OoC

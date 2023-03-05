@@ -162,7 +162,7 @@ string LookupNode::as_string(const vector<string>& arg_names) const {
 }
 
 Dim LookupNode::dim_forward(const vector<Dim>& xs) const {
-  return dim;
+  return params.get_storage().dim;
 }
 
 void LookupNode::accumulate_grad(const Tensor& g) {

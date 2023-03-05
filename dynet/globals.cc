@@ -21,5 +21,6 @@ bool blocked = true;
 bool opt_mem = true;
 int do_pre_malloc = 0;
 int ooc_autobatch_flag;
+int block_opt_flag = 0;
 
 }

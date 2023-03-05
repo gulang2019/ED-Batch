@@ -79,7 +79,7 @@ ComputationGraph::ComputationGraph():n_stored_stypes(stypes.size()){
     ee.reset(new SimpleExecutionEngine(*this));
   }
   if (n_hgs > 0) {
-    cerr << "Memory allocator assumes only a single ComputationGraph at a time.\n";
+    // cerr << "Memory allocator assumes only a single ComputationGraph at a time.\n";
     // throw std::runtime_error("Attempted to create >1 CG");
   }
   ++n_hgs;
@@ -96,7 +96,7 @@ ComputationGraph::ComputationGraph(bool batched):n_stored_stypes(stypes.size()) 
     ee.reset(new SimpleExecutionEngine(*this));
   }
   if (n_hgs > 0) {
-    cerr << "Memory allocator assumes only a single ComputationGraph at a time.\n";
+    // cerr << "Memory allocator assumes only a single ComputationGraph at a time.\n";
     // throw std::runtime_error("Attempted to create >1 CG");
   }
   ++n_hgs;
@@ -109,7 +109,7 @@ ComputationGraph::ComputationGraph(bool batched):n_stored_stypes(stypes.size()) 
 ComputationGraph::ComputationGraph(dynet::ExecutionEngine* ptr): n_stored_stypes(stypes.size()){
   ee.reset(ptr);
   if (n_hgs > 0) {
-    cerr << "Memory allocator assumes only a single ComputationGraph at a time.\n";
+    // cerr << "Memory allocator assumes only a single ComputationGraph at a time.\n";
     // throw std::runtime_error("Attempted to create >1 CG");
   }
   ++n_hgs;
@@ -576,6 +576,11 @@ void ComputationGraph::dump_batch_sequence(std::string dirname){
     }
     file.close();  
   }
+}
+
+void ComputationGraph::visualize(std::string filename) {
+  if (ee == nullptr) return ;
+  ee->visualize(filename);
 }
 
 }  // namespace dynet

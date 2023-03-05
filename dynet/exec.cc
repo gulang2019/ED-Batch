@@ -315,14 +315,15 @@ void BatchedExecutionEngine::combine_tensors(
   AlignedMemoryPool *mempool = tout.device->pools[(int)DeviceMempool::FXS];
   // Determine needed memory for tout and get list of nodes corresponding to
   // specified argument.
-  unsigned total_dsize = 0;
+  size_t total_dsize = 0;
   vector<VariableIndex> arg_nodes(batch_ids.size());
   for (unsigned i = 0; i < batch_ids.size(); ++i) {
     const auto nid = cg.nodes[batch_ids[i]]->args[aid];
     total_dsize += cg.nodes[nid]->dim.size();
     arg_nodes[i] = nid;
   }
-  tout.d = Dim({total_dsize});
+  DYNET_ASSERT(total_dsize <= 0xffffffff, "mem size exceed limit");
+  tout.d = Dim({(unsigned)total_dsize});
   // global_timer.stop("EXT combine preparation");
 
   // allocate memory for tout
@@ -338,6 +339,7 @@ void BatchedExecutionEngine::combine_tensors(
     dest = static_cast<float*>(mempool->allocate(total_dsize * sizeof(float)));
     memory_blocks.push_back({dest, total_dsize, false});
   }
+  DYNET_ASSERT(dest!=nullptr, "mem allocation for combine tensors failed");
   // global_timer.stop("EXT combined allocation");
   // global_timer.start("EXT prepare args");
 
@@ -413,7 +415,7 @@ void BatchedExecutionEngine::scatter_tensors(
     int sz = node2size[nid];
     if (pre_allocated[nid] && src != dst){
       if (tin.device->type == DeviceType::CPU){
-        if (profiling_flag > 0){
+        if (profiling_flag > 1){
           cout << "[scatter]:" << nid << ",dst:"<<dst<<",src:"<<src<<endl;
         }
         num_seqs ++;
@@ -534,7 +536,7 @@ const Tensor& BatchedExecutionEngine::forward() {
 }
 
 const Tensor& BatchedExecutionEngine::forward(VariableIndex i) {
-  invalidate();
+  // invalidate();
   return incremental_forward(i);
 }
 
@@ -638,7 +640,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     int* node2height = node2depth + uptop1;
     int* active_un_begin = node2height + uptop1;
     int* active_un_end = active_un_begin;
-    float* prof2avg = (float*)(active_un_begin + uptop1psig);
+    float* prof2avg = (float*)(active_un_begin + uptop1);
     float* prof2cnt = prof2avg + uptop1psig;
 
     for (auto &e: bindings){
@@ -719,9 +721,6 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
             active_batched.push_back(abptr);
           }
         } else if(node2left[j] == 0) {
-          if (profiling_flag > 0){
-            fprintf(stdout, "[dynet::exec]: unbatchable %d %s\n", j, node->as_dummy_string().c_str());
-          }
           *(active_un_end++) = j;
         }
       }
@@ -843,10 +842,10 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     }
     else if (autobatch_strategy == 1 || autobatch_strategy == 12 || autobatch_strategy == 3 || autobatch_strategy >= 4) {
       // Count of remaining things for this profile
-      unordered_map<int, int> depthprofcnt(upto * 3);
+      unordered_map<int, int> depthprofcnt;
       // Node to successors
       vector<VariableIndex> node2successors(uptop1, (VariableIndex)0);
-      vector<VariableIndex> active_batched(uptop1 * 2, (VariableIndex)0);
+      vector<VariableIndex> active_batched(uptop1psig * 2, (VariableIndex)0);
       VariableIndex n2sptr, abptr, abmax = (VariableIndex)0;
 
       // 1) Calculate the batching profiles for every node that needs to be
@@ -870,18 +869,17 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
         node2depth[j] = depth;
         // Get the node profile ID
         sig = node->autobatch_sig(cg, sigmap);
-        // If batchable, collect statistics
         if (sig != 0) {
           node2profid[j] = sig;
           if (autobatch_strategy == 3) {
-            ++depthprofcnt[(depth * upto) + sig];
+            ++depthprofcnt[(depth * uptop1psig) + sig];
           }
           abmax = (VariableIndex)std::max((int)abmax, sig+1);
           prof2avg[sig] += depth;
           prof2cnt[sig]++;
           if(depth == 0) {
             abptr = active_batched[sig];
-            ++active_batched[sig+uptop1];
+            ++active_batched[sig+uptop1psig];
             active_batched.push_back(j);
             active_batched[sig] = active_batched.size();
             active_batched.push_back(abptr);
@@ -893,7 +891,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
         }
       }
       for (size_t j = 0; j < (size_t)sigmap.size(); ++j)
-        prof2avg[j] /= prof2cnt[j];
+        prof2avg[j] /= (prof2cnt[j]+1e-3);
       // timer.stop("EXT scheduling preparation");
       
       // timer.start("EXT scheduling computation");
@@ -977,7 +975,6 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
           }
 
           if (node_id == (VariableIndex) uptop1){
-            cerr << "optimal with idx = " << idx <<endl;
             if (min_batch > idx){
               min_batch = idx;
               for (int i = 0; i < idx; i++)
@@ -1193,12 +1190,12 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
                   *(active_un_end++) = next_node;
                 } else {
                   abptr = active_batched[profid];
-                  ++active_batched[profid + uptop1];
+                  ++active_batched[profid + uptop1psig];
                   active_batched.push_back(next_node);
                   active_batched[profid] = active_batched.size();
                   active_batched.push_back(abptr);
                   if(autobatch_strategy == 3)
-                    --depthprofcnt[(node2depth[next_node] * upto) + profid];
+                    --depthprofcnt[(node2depth[next_node] * uptop1psig) + profid];
                 }
               }
             }
@@ -1211,7 +1208,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
             // Copy the things from the linked list to the actual batch.
             abptr = active_batched[curr_prof];
             DYNET_ASSERT(abptr != (VariableIndex)0, "abptr is null");
-            my_batch.ids.resize(active_batched[curr_prof+uptop1]);
+            my_batch.ids.resize(active_batched[curr_prof+uptop1psig]);
             if (is_get_batch) 
               DYNET_ASSERT(my_batch.ids.size() == batches[batch_id - get_offset].ids.size(), 
                 "Must have same batch size between get and function.");
@@ -1222,7 +1219,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
               abptr = active_batched[abptr];
             }
             active_batched[curr_prof] = 0;
-            active_batched[curr_prof + uptop1] = 0;
+            active_batched[curr_prof + uptop1psig] = 0;
             auto & batch_ids = my_batch.ids;
             // Decrement the counts of the predecessors and add them to the
             // active queue as appropriate.
@@ -1240,7 +1237,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
                     *(active_un_end++) = next_node;
                   } else {
                     abptr = active_batched[profid];
-                    ++active_batched[profid+uptop1];
+                    ++active_batched[profid+uptop1psig];
                     active_batched.push_back(next_node);
                     active_batched[profid] = active_batched.size();
                     active_batched.push_back(abptr);
@@ -1317,12 +1314,13 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
     
     global_timer.stop("scheduling");
     // 2.5 print some debug info
-    cerr << "Forward Call Batch_strategy " << autobatch_strategy  << " : " << batch_id << " kernels."  << endl;
+    // cerr << "Forward Call Batch_strategy " << autobatch_strategy  << " : " << batch_id << " kernels."  << endl;
     // cout << "sigmap:";
     // sigmap.show();
     timer.cumint("n_kernels", batch_id);
-    global_timer.log("n_kernel", batch_id);
-    global_timer.cumint("n_kernels", batch_id);
+    // global_timer.log("n_kernel", batch_id);
+    global_timer.cumint("n_kernels", batch_id - num_batches_evaluated);
+    global_timer.cumint("n_node", upto+1-num_nodes_evaluated);
     
     if (profiling_flag > 1) {
       cout << "Forward Call batch_strategy " << autobatch_strategy  << " : " << batch_id << " kernels."  << endl;
@@ -1375,14 +1373,14 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
       fprintf(stdout, "dependency test passed!");
     }
 
-    // for (int bid = num_batches_evaluated; bid < batch_id; ++bid){
-    //   auto & my_batch = batches[bid];
-    //   cout << "BID" << bid << ":";
-    //   for (auto & id: my_batch.ids) cout << id << ",";
-    //   cout << endl;
-    // }
     if (profiling_flag > 0)
     {
+      for (int bid = num_batches_evaluated; bid < batch_id; ++bid){
+        auto & my_batch = batches[bid];
+        cout << "BID" << bid << ":";
+        for (auto & id: my_batch.ids) cout << id << ",";
+        cout << endl;
+      }
       vector<int> seq;
       for (int bid = num_batches_evaluated; bid < batch_id; ++bid){
         int sig = cg.nodes[batches[bid].ids.front()]->autobatch_sig(cg, sigmap);
@@ -1545,7 +1543,8 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
         // cout << "}=" << node->as_string(inputs) << endl;
 
         global_timer.start("computation");
-        global_timer.lock();
+        string old_scope = global_timer.scope_tag;
+        global_timer.scope(old_scope + "-block");
         if (node->is_function){
           FunctorNode* functor_node = static_cast<FunctorNode*> (node);
           vector<Tensor*> ys;
@@ -1561,8 +1560,9 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
           node->forward(xs, my_batch.nfx);
         }
 
+        global_timer.scope(old_scope);
+
         // timer.stop("EXT computation");
-        global_timer.unlock();
         global_timer.stop("computation");
         ++num_batches_evaluated;
       } else { // execute a batch node
@@ -1631,7 +1631,8 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
         global_timer.stop("memtransfer");
         node->autobatch_reshape(cg, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
         global_timer.start("computation");
-        global_timer.lock();
+        string old_scope = global_timer.scope_tag;
+        global_timer.scope(old_scope + "-block");
         // vector<string> input_dims;
         // for (auto& x: my_batch.arg_nfxs) {
         //     ostringstream o;
@@ -1656,7 +1657,7 @@ const Tensor& BatchedExecutionEngine::incremental_forward_no_update(
           // cout << "dim=" << my_batch.nfx.d << endl;
           node->forward(my_batch.arg_nfxs, my_batch.nfx);
         }
-        global_timer.unlock();
+        global_timer.scope(old_scope);
         global_timer.stop("computation");
         // cerr << "batched forward[" << num_batches_evaluated << "] (nodes:"; for(auto id : my_batch.ids) cerr << ' ' << id; cerr << ") == " << print_vec(as_vector(my_batch.nfx)) << endl;
         ++num_batches_evaluated;

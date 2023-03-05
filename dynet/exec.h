@@ -27,6 +27,7 @@ class ExecutionEngine {
   virtual OoC::View* allocate_ragged(const Dim& d, const std::vector<int>& seqs, bool transpose = false, bool reverse = false){return nullptr;}
   virtual OoC::View* allocate(const Dim& d, const std::vector<int>& dims){return nullptr;}
   virtual void bind(int nid, OoC::View* view, const std::vector<int>& indices) {}
+  virtual void visualize(std::string filename) {};
 protected:
   explicit ExecutionEngine(ComputationGraph& cg);
   DeviceManager* const device_manager;
@@ -56,7 +57,7 @@ class SimpleExecutionEngine : public ExecutionEngine {
 
 struct BatchInfo {
 public:
-  BatchInfo() : pseudo_node(nullptr) { }
+  BatchInfo() : pseudo_node(nullptr) {}
   // The forward tensor, may be null if singleton batch
   Tensor nfx;
   // The pseudo node used for calculation, also may be null if not needed

@@ -28,6 +28,7 @@ namespace OoC{
         void backward(VariableIndex i, bool full) override;
         void invalidate() override;
         void invalidate(unsigned i) override;
+        void visualize(std::string filename) override;
         
     private:
         void init();
@@ -54,6 +55,9 @@ namespace OoC{
                        int aid, Tensor &tout);
         // for debug
         std::unordered_set<std::pair<int, int>, OoC::hash_pair> mem_transfer_edges;
+
+        VariableIndex num_nodes_evaluated = 0;
+        int num_batches_evaluated = 0;
     };
 }
 
