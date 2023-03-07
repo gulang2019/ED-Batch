@@ -7,7 +7,7 @@
 #include <dynet/dict.h>
 #include <string>
 #include <dynet/param-init.h>
-#include <dynet/ooc-computation_graph.h>
+#include "dynet/ooc-block.h"
 
 #include "lstm.hpp"
 

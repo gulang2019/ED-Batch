@@ -14,7 +14,7 @@ using namespace boost;
 #include <dynet/dict.h>
 #include <string>
 #include <dynet/param-init.h>
-#include <dynet/ooc-computation_graph.h>
+#include "dynet/ooc-block.h"
 
 #include "treenn.hpp"
 #include "model.hpp"
@@ -232,7 +232,6 @@ namespace OoCTest
                 hc_ret.second = cmult(i, u);
                 hc_ret.first = cmult(o, tanh(hc_ret.second));
             }
-            cg->mark_basic_block();
         }
         else
         {
@@ -261,7 +260,6 @@ namespace OoCTest
                 hc_ret.second = cmult(i, u) + cmult(f1, hc1.second) + cmult(f2, hc2.second);
                 hc_ret.first = cmult(o, tanh(hc_ret.second));
             }
-            cg->mark_basic_block();
         }
         visited[tree] = hc_ret;
         if (decorate)
@@ -275,7 +273,6 @@ namespace OoCTest
     {
         builder->start_graph(cg);
         Expression W = parameter(cg, W_param);
-        cg.mark_basic_block();
         vector<Expression> losses;
         for (size_t j2 = 0; j2 < batch_size; ++j2)
         {

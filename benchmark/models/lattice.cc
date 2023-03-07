@@ -162,7 +162,6 @@ namespace OoCTest
                     Expression h_out, c_out;
                     c_out = dynet::cmult(i, c_) + dynet::cmult(f, c_in);
                     h_out = dynet::cmult(o, tanh(c_out));
-                    _cg->mark_basic_block(false);
                     hs.push_back(h_out);
                     cs.push_back(c_out);
                 }
@@ -193,7 +192,6 @@ namespace OoCTest
             for (size_t i = 0; i < WS.size(); ++i)
                 cg_WS[i] = parameter(*_cg, WS[i]);
         }
-        cg.mark_basic_block(false);
     }
 
     LatticeGRUBuilder::LatticeGRUBuilder(ParameterCollection& model, unsigned hdim){

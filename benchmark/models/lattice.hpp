@@ -9,11 +9,11 @@
 #include <dynet/expr.h>
 #include <dynet/dict.h>
 #include <dynet/param-init.h>
-#include <dynet/ooc-computation_graph.h>
+#include "dynet/ooc-block.h"
 
 #include "model.hpp"
 
-// #include <dynet/ooc-computation_graph.h>
+// #include "dynet/ooc-block.h"
 namespace OoCTest
 {
     struct Arc

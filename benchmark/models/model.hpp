@@ -1,4 +1,5 @@
 #pragma once
+
 #include <vector>
 #include <stdexcept>
 #include <fstream>
@@ -16,7 +17,7 @@
 
 namespace OoCTest
 {
-    const int verbose = 1;
+    const int verbose = 0;
 
     class Model
     {

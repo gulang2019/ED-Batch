@@ -25,8 +25,6 @@ using namespace OoCTest;
 
 #define REPEAT (100)
 
-bool verbose = true;
-
 string store_dir = "tmp/";
 
 bool assert_allclose(const std::vector<float>& a, const std::vector<float>& b){
@@ -220,7 +218,7 @@ void test_end2end(std::string workload, std::string device, int batch_size, int 
         {"dynet_agenda", 1, 0, 0}, 
         {"dynet_depth", 2, 0, 0}, 
         // {"cpu_gpu_para", 0, 1, 5},
-        // {"typewiseLB", 8, 0, 0},    
+        {"typewiseLB", 8, 0, 0},    
         // {"dynet_agenda-opt", 1, 0, 2}, 
         // {"dynet_depth-opt", 2, 0, 2}, 
         // {"dynet_agenda-opt", 1, 0, 5}, 

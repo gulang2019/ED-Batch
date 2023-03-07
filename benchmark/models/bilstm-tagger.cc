@@ -102,19 +102,16 @@ namespace OoCTest
         if ((!withchar) || wc[w] >= 5)
         {
             auto ret = lookup(cg, word_lookup, wv.convert(w));
-            // cg.mark_basic_block(false);
             return ret;
         }
         else
         {
             Expression ret;
             Expression pad = lookup(cg, char_lookup, cv.convert("<*>"));
-            // cg.mark_basic_block(false);
             vector<Expression> cembs(w.size() + 2, pad);
             for (size_t i = 0; i < w.size(); ++i)
             {
                 cembs[i + 1] = lookup(cg, char_lookup, cv.convert(w.substr(i, 1)));
-                cg.mark_basic_block(false);
             }
             cFwdRNN.start_new_sequence(h0_c);
             cBwdRNN.start_new_sequence(h0_c);

@@ -19,8 +19,6 @@ using namespace std;
 using namespace dynet;
 using namespace OoCTest;
 
-bool verbose = true;
-
 string root_dir = "1_1";
 string store_dir = "";
 
@@ -35,7 +33,7 @@ void load_graph(
     int layers)
 {
     global_timer.scope("compile");
-    const vector<int> opts = {5};
+    const vector<int> opts = {2,5};
     for (auto i: opts){
         dynet::block_opt_flag = i;
         global_timer.start(workload + "-" + to_string(i));
@@ -87,7 +85,6 @@ void test_block(std::string workload, std::string device, int batch_size, unsign
         data_loader.build_graph(cg, {{workload + "-2", batch_size}});
         VariableIndex last_idx = cg.nodes.size() - 1;
         Tensor t = cg.forward(last_idx);
-        cerr << "warm up" << i << "/" << REPEAT << endl;
     }
     // validity check
     // for (auto& config: configs){
@@ -122,7 +119,6 @@ void test_block(std::string workload, std::string device, int batch_size, unsign
             cg.forward(res);
             global_timer.stop("forward");
             global_timer.stop("total");
-            cerr << "opt" << opt << ":" <<  repeat << "/" << REPEAT << endl;
         }
     }
 
@@ -156,6 +152,7 @@ void test_compile_time()
 
 int main(int argc, char **argv)
 {
+
     dynet::initialize(argc, argv);
     std::string workload = string(argv[1]);
     std::string device = string(argv[2]);
