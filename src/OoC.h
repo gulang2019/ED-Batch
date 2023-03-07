@@ -103,7 +103,9 @@ namespace OoC
     std::vector<int> nodes;
     std::vector<int> types;
 
+    // the batches
     std::vector<std::vector<int>> batch_ids;
+    // the memory allocation sequence
     std::vector<int> mem_allocation_order;
     void show();
   };
@@ -118,6 +120,8 @@ namespace OoC
 
     PatternCache(DynamicBatching *db_in) : db(db_in) {}
     PatternCache() {}
+
+    /** \brief legacy to support graph contraction*/
     double update(std::unordered_map<int, std::vector<int>> &type2batchSeqs);
     // return the score of the portion of node mapped
     double inference();
@@ -129,6 +133,11 @@ namespace OoC
     bool topo_check(int idx, const std::unordered_set<int> &subgraph);
     bool topo_check(int idx, std::vector<int> &subgraph);
 
+    /** \brief subgraph optimizations
+     * \param ops, the dataflow graph;
+     * \param node2types, the type of each node 
+     * \return pattern, the batching policy and memory allocation policy 
+    */
     void get_batch_ids_dynet(const std::vector<std::vector<int>> &ops, const std::vector<int>& node2types, Pattern *pattern);
     void get_batch_ids_fold(const std::vector<std::vector<int>> &ops, const std::vector<int>& node2types, Pattern *pattern);
     void get_batch_ids_ooc(const std::vector<std::vector<int>> &ops, const std::vector<int>& node2types, Pattern *pattern);
