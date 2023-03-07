@@ -1,5 +1,5 @@
 #include "OoC.h"
-#include "ext-pqtree.h"
+#include "pq-trees/ext-pqtree.h"
 
 #include "dynet/exec.h"
 #include "dynet/param-nodes.h"
@@ -9,715 +9,16 @@
 #include "dynet/nodes-flow.h"
 #include "dynet/globals.h"
 
+#include "dynet/nodes-functor.h"
+
+
 using namespace std;
 using namespace OoC;
 
+
+// some extension to dynet's BatchedExecutionEngine 
 namespace dynet
 {
-    struct nodeInfo
-    {
-        vector<VariableIndex> preds;
-        vector<int> succs;
-        int hash = 0;
-        int type;
-        bool visited = false;
-        int supernode_id = -1;
-    };
-
-    void BatchedExecutionEngine::memory_allocation(BatchInfo &my_batch)
-    {
-        global_timer.start("memory allocation");
-        auto &batch_ids = my_batch.ids;
-        auto &nfx = my_batch.nfx;
-        assert(batch_ids.size());
-        if (batch_ids.size() == 1)
-        {
-            VariableIndex curr_node = batch_ids[0];
-            if (profiling_flag > 1)
-                node2mem_pos[batch_ids[0]] = mem_id++;
-            const Node *node = cg.nodes[curr_node];
-            DYNET_ASSERT(node->device != nullptr,
-                         "Attempt to access null device in "
-                         "BatchedExecutionEngine::incremental_forward");
-            // Save the node profile
-            nfx.d = node->dim;
-            nfx.device = node->device;
-            nfx.mem_pool = DeviceMempool::FXS;
-            // Allocate memory
-            auto mempool = node->device->pools[(int)DeviceMempool::FXS];
-            // assert(node2size[curr_node] == cg.nodes[curr_node]->dim.size());
-            nfx.v = static_cast<float *>(
-                mempool->allocate(cg.nodes[curr_node]->dim.size() * sizeof(float)));
-            if (nfx.v == nullptr)
-            {
-                DYNET_RUNTIME_ERR("Ran out of memory when allocating for node "
-                                  << curr_node << ", allocating FWD memory.");
-            }
-            const size_t aux_size = node->aux_storage_size();
-            if (aux_size)
-            {
-                node->aux_mem = mempool->allocate(aux_size);
-                if (!node->aux_mem)
-                {
-                    DYNET_RUNTIME_ERR(
-                        "Ran out of auxiliary memory when allocating for node " << curr_node);
-                }
-            }
-        }
-        else
-        { // here: batch_ids.size() > 1
-            // Set up the configuration of each component node, including pointer
-            // differential from the start of the batch.
-            const Node *node = nullptr;
-            size_t tot_main = 0, tot_aux = 0, my_main, my_aux;
-            for (auto curr_node : batch_ids)
-            {
-                if (profiling_flag > 1)
-                    node2mem_pos[curr_node] = mem_id++;
-                node = cg.nodes[curr_node];
-                // assert(node2size[curr_node] == cg.nodes[curr_node]->dim.size());
-                my_main = cg.nodes[curr_node]->dim.size();
-                my_aux = node->aux_storage_size();
-                node2offset[curr_node] = tot_main;
-                tot_main += my_main;
-                node->aux_mem = (void *)tot_aux;
-                tot_aux += my_aux;
-            }
-
-            // Allocate main/auxiliary memory for the batch
-            assert(node != nullptr);
-            auto mempool = node->device->pools[(int)DeviceMempool::FXS];
-            float *head_main = static_cast<float *>(
-                mempool->allocate(tot_main * sizeof(float)));
-            if (head_main == nullptr)
-            {
-                DYNET_RUNTIME_ERR("Ran out of memory when executing batch, allocating FWD memory.");
-            }
-            // for(auto curr_node : batch_ids) nfxs[curr_node].v = head_main + node2diff[curr_node];
-            char *head_aux = nullptr;
-            if (tot_aux > 0)
-            {
-                head_aux = static_cast<char *>(mempool->allocate(tot_aux));
-                if (head_aux == nullptr)
-                {
-                    DYNET_RUNTIME_ERR("Ran out of memory when executing node, allocating FWD memory.");
-                }
-                for (auto curr_node : batch_ids)
-                    cg.nodes[curr_node]->aux_mem =
-                        (void *)(head_aux + (ptrdiff_t)cg.nodes[curr_node]->aux_mem);
-            }
-
-            // Get the concatenation and pseudo-node info
-            my_batch.concat = node->autobatch_concat(cg);
-            my_batch.pseudo_node = node->autobatch_pseudo_node(cg, batch_ids);
-            if (my_batch.pseudo_node != nullptr)
-            {
-                my_batch.pseudo_node->aux_mem = head_aux;
-                my_batch.pseudo_node->device = node->device;
-            }
-            else
-            {
-                cg.nodes[batch_ids[0]]->aux_mem = head_aux;
-            }
-            // Set the size for the final output
-            nfx.device = node->device;
-            nfx.mem_pool = DeviceMempool::FXS;
-            nfx.d = Dim({(unsigned int)tot_main});
-            nfx.v = head_main;
-        } // batch_ids.size() > 1 condition
-        global_timer.stop("memory allocation");
-    }
-
-    bool BatchedExecutionEngine::commit_batch_OoC(vector<int> &snode_batch)
-    {
-        start_indices.push_back(num_batch_committed);
-
-        sort(snode_batch.begin(), snode_batch.end(), [&](int sid1, int sid2)
-             { return memory_affinity[sid1] < memory_affinity[sid2]; });
-        int batch_size = snode_batch.size();
-
-        for (auto nid : snode_batch)
-        {
-            auto &snode = cg.snodes[nid];
-            snode->bid = num_batch_committed;
-            int aid = 0;
-            for (auto &succ : snode->succs)
-            {
-                memory_affinity[succ] = memory_affinity_tag + aid * batch_size;
-                auto succNode = cg.snodes[succ];
-                aid++;
-            }
-            memory_affinity_tag++;
-        }
-        memory_affinity_tag += batch_size * (cg.snodes[snode_batch.front()]->succs.size() - 1);
-
-        OoC::Pattern *pattern = cg.stypes[cg.snodes[snode_batch.front()]->type].pattern;
-        // execution allocation;
-        int bid = num_batch_committed;
-        for (auto &ids : pattern->batch_ids)
-        {
-            auto &batch = batches[bid];
-            batch.ids.clear();
-            for (auto id : ids)
-            {
-                for (auto snid : snode_batch)
-                {
-                    int nid = cg.snodes[snid]->min_nid + id;
-                    node2batch[nid] = bid;
-                    batch.ids.push_back(nid);
-                }
-            }
-            bid++;
-        }
-        if (profiling_flag > 2)
-        {
-            fprintf(stdout, "cg.snodes: ");
-            for (auto snode : snode_batch)
-            {
-                fprintf(stdout, "(%d, %d), ", snode, cg.snodes[snode]->min_nid);
-            }
-            fprintf(stdout, "\n");
-            fprintf(stdout, "batch.ids(%d, %d): ", (int)pattern->batch_ids.size(), pattern->n_batch);
-            for (int bid = num_batch_committed;
-                 bid < num_batch_committed + pattern->batch_ids.size(); bid++)
-            {
-                fprintf(stdout, "(");
-                for (auto id : batches[bid].ids)
-                {
-                    fprintf(stdout, "%d, ", id);
-                }
-                fprintf(stdout, "), ");
-            }
-            fprintf(stdout, "\n");
-        }
-        // memory allocation & execution
-        for (auto bid : pattern->mem_allocation_order)
-            memory_allocation(batches[bid + num_batch_committed]);
-
-        // for (int bid = num_batch_committed; bid < num_batch_committed + pattern->n_batch; bid++){
-        //     execute_batch(batches[bid]);
-        // }
-        assert(pattern->mem_allocation_order.size() == pattern->n_batch);
-        num_batch_committed += pattern->n_batch;
-        return true;
-    }
-
-    void BatchedExecutionEngine::execute_batch(BatchInfo &my_batch)
-    {
-        global_timer.start("execution");
-        string current_batch_name;
-        Tensor temp_nfx;
-        vector<const Tensor *> xs(16), ts(16);
-        if (profiling_flag)
-        {
-            VariableIndex nid = my_batch.ids[0];
-            Node *node = cg.nodes[nid];
-            current_batch_name = "FWD " + node->as_dummy_string();
-            timer.start(current_batch_name);
-        }
-        if (my_batch.ids.size() == 1)
-        { // execute a single node
-            VariableIndex nid = my_batch.ids[0];
-            Node *node = cg.nodes[nid];
-            xs.resize(node->arity());
-            unsigned ai = 0;
-            for (VariableIndex arg : node->args)
-            {
-                xs[ai] = &get_nfx(arg);
-                ++ai;
-            }
-            // timer.start("EXT computation");
-            global_timer.start("computation");
-            node->forward(xs, my_batch.nfx);
-            // timer.stop("EXT computation");
-            global_timer.stop("computation");
-            ++num_batches_evaluated;
-        }
-        else
-        { // execute a batch node
-            size_t arity = my_batch.concat.size();
-            Node *node = my_batch.pseudo_node;
-            if (node == nullptr)
-                node = cg.nodes[my_batch.ids[0]];
-            xs.resize(arity);
-            // Figure out whether we need to create the inputs
-            my_batch.arg_nfxs.resize(arity);
-            // timer.start("EXT memtransfer");
-            global_timer.start("memtransfer");
-            for (size_t i = 0; i < arity; ++i)
-            {
-                // 1) the inputs don't need to be concatenated. Just use the tensor
-                if (!my_batch.concat[i])
-                {
-                    my_batch.arg_nfxs[i] = &get_nfx(node->args[i]);
-                    // 2) the inputs need to be concatenated
-                }
-                else
-                {
-                    // 2.a) the inputs need to be concatenated, but are already in the
-                    // right order within a contiguous block of memory.
-                    // TODO: make this work completely
-                    Tensor *my_xsi = new Tensor;
-                    my_xsi->device = node->device;
-                    my_xsi->mem_pool = DeviceMempool::FXS;
-                    global_timer.start("check contig");
-
-                    // check contig memory
-                    auto it = my_batch.ids.begin();
-                    auto itend = my_batch.ids.end();
-                    VariableIndex aid = cg.nodes[*(it++)]->args[i];
-                    float *min_node =
-                        batches[node2batch[aid]].nfx.v + node2offset[aid];
-                    // assert(node2size[aid] == cg.nodes[aid]->dim.size());
-                    unsigned int tot_arg = cg.nodes[aid]->dim.size();
-                    bool contig = true;
-                    while (it != itend && contig)
-                    {
-                        aid = cg.nodes[*(it++)]->args[i];
-                        float *v = batches[node2batch[aid]].nfx.v + node2offset[aid];
-                        contig = contig && v == min_node + tot_arg;
-                        // assert(node2size[aid] == cg.nodes[aid]->dim.size());
-                        tot_arg += cg.nodes[aid]->dim.size();
-                    }
-                    global_timer.stop("check contig");
-                    if (contig)
-                    { // if contig, use current mem for xs_i
-                        // xs[i] = &batched_nfxs[...];
-                        my_xsi->v = min_node;
-                        my_xsi->d = Dim({tot_arg});
-                        my_batch.concat[i] = 2;
-                        //   autobatch_garbage[i] = false;
-                    }
-                    else
-                    { // if non-contig, copy xs_i into new mem.
-                        // 2.b) the inputs need to be concatenated, and are not contiguous
-                        global_timer.cumint("n_memtransfer", my_batch.ids.size() * cg.nodes[my_batch.ids.front()]->dim.size());
-                        global_timer.cumint("n_combine", 1);
-                        combine_tensors(my_batch.ids, i, *my_xsi);
-                    }
-                    my_batch.arg_nfxs[i] = my_xsi;
-                }
-            }
-            global_timer.stop("memtransfer");
-            node->autobatch_reshape(cg, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
-            global_timer.start("computation");
-            node->forward(my_batch.arg_nfxs, my_batch.nfx);
-            global_timer.stop("computation");
-            ++num_batches_evaluated;
-        } // execute a batch node (not a single instance node)
-        if (profiling_flag)
-            timer.stop(current_batch_name);
-        global_timer.stop("execution");
-    }
-
-    void BatchedExecutionEngine::execution(int upto)
-    {
-        string current_batch_name;
-        Tensor temp_nfx;
-        vector<const Tensor *> xs(16), ts(16);
-        unordered_set<pair<int, int>, hash_pair> mem_transfer_edges;
-
-        for (int si = start_indices.size() - 1; si > 0; --si)
-        {
-            for (int bid = start_indices[si - 1]; bid < start_indices[si]; ++bid)
-            {
-                // Read in the stuff for this batch
-                auto &my_batch = batches[bid];
-                if (profiling_flag)
-                {
-                    VariableIndex nid = my_batch.ids[0];
-                    Node *node = cg.nodes[nid];
-                    current_batch_name = "FWD " + node->as_dummy_string();
-                    timer.start(current_batch_name);
-                }
-                if (my_batch.ids.size() == 1)
-                { // execute a single node
-                    VariableIndex nid = my_batch.ids[0];
-                    Node *node = cg.nodes[nid];
-                    xs.resize(node->arity());
-                    unsigned ai = 0;
-                    for (VariableIndex arg : node->args)
-                    {
-                        xs[ai] = &get_nfx(arg);
-                        ++ai;
-                    }
-                    // timer.start("EXT computation");
-                    global_timer.start("computation");
-                    node->forward(xs, my_batch.nfx);
-                    // timer.stop("EXT computation");
-                    global_timer.stop("computation");
-                }
-                else
-                { // execute a batch node
-                    size_t arity = my_batch.concat.size();
-                    Node *node = my_batch.pseudo_node;
-                    if (node == nullptr)
-                        node = cg.nodes[my_batch.ids[0]];
-                    xs.resize(arity);
-                    // Figure out whether we need to create the inputs
-                    my_batch.arg_nfxs.resize(arity);
-                    // timer.start("EXT memtransfer");
-                    global_timer.start("memtransfer");
-                    for (size_t i = 0; i < arity; ++i)
-                    {
-                        // 1) the inputs don't need to be concatenated. Just use the tensor
-                        if (!my_batch.concat[i])
-                        {
-                            my_batch.arg_nfxs[i] = &get_nfx(node->args[i]);
-                            // 2) the inputs need to be concatenated
-                        }
-                        else
-                        {
-                            // 2.a) the inputs need to be concatenated, but are already in the
-                            // right order within a contiguous block of memory.
-                            // TODO: make this work completely
-                            Tensor *my_xsi = new Tensor;
-                            my_xsi->device = node->device;
-                            my_xsi->mem_pool = DeviceMempool::FXS;
-
-                            // check contig memory
-                            global_timer.start("check contig");
-                            auto it = my_batch.ids.begin();
-                            auto itend = my_batch.ids.end();
-                            VariableIndex aid = cg.nodes[*(it++)]->args[i];
-                            float *min_node =
-                                batches[node2batch[aid]].nfx.v + node2offset[aid];
-                            // assert(node2size[aid] == cg.nodes[aid]->dim.size());
-                            unsigned int tot_arg = cg.nodes[aid]->dim.size();
-                            bool contig = true;
-                            while (it != itend && contig)
-                            {
-                                aid = cg.nodes[*(it++)]->args[i];
-                                float *v = batches[node2batch[aid]].nfx.v + node2offset[aid];
-                                contig = contig && v == min_node + tot_arg;
-                                // assert(node2size[aid] == cg.nodes[aid]->dim.size());
-                                tot_arg += cg.nodes[aid]->dim.size();
-                            }
-                            global_timer.stop("check contig");
-                            if (contig)
-                            { // if contig, use current mem for xs_i
-                                // xs[i] = &batched_nfxs[...];
-                                my_xsi->v = min_node;
-                                my_xsi->d = Dim({tot_arg});
-                                my_batch.concat[i] = 2;
-                                //   autobatch_garbage[i] = false;
-                            }
-                            else
-                            { // if non-contig, copy xs_i into new mem.
-                                // 2.b) the inputs need to be concatenated, and are not contiguous
-                                if (profiling_flag > 1)
-                                {
-                                    for (auto id : my_batch.ids)
-                                        mem_transfer_edges.insert({cg.nodes[id]->args[i], id});
-                                }
-                                global_timer.cumint("n_memtransfer", my_batch.ids.size() * cg.nodes[my_batch.ids.front()]->dim.size());
-                                global_timer.cumint("n_combine", 1);
-                                combine_tensors(my_batch.ids, i, *my_xsi);
-                            }
-                            my_batch.arg_nfxs[i] = my_xsi;
-                        }
-                    }
-                    // timer.stop("EXT memtransfer");
-                    global_timer.stop("memtransfer");
-                    // timer.start("EXT mem reshape");
-                    node->autobatch_reshape(cg, my_batch.ids, my_batch.concat, my_batch.arg_nfxs, my_batch.nfx);
-                    // timer.stop("EXT mem reshape");
-                    // timer.start("EXT computation");
-                    global_timer.start("computation");
-                    node->forward(my_batch.arg_nfxs, my_batch.nfx);
-                    // timer.stop("EXT computation");
-                    global_timer.stop("computation");
-                    // cerr << "batched forward[" << num_batches_evaluated << "] (nodes:"; for(auto id : my_batch.ids) cerr << ' ' << id; cerr << ") == " << print_vec(as_vector(my_batch.nfx)) << endl;
-                } // execute a batch node (not a single instance node)
-                ++num_batches_evaluated;
-                if (profiling_flag)
-                    timer.stop(current_batch_name);
-            }
-        }
-        assert(num_batches_evaluated == num_batch_committed);
-        string graphname = "B7_" + to_string(graph_id);
-        visualize(upto, "./pics/" + graphname + ".gv", graphname, &mem_transfer_edges);
-        graphname = "S" + to_string(graph_id);
-        visualize_snode(upto, "./pics/" + graphname + ".gv", graphname, &mem_transfer_edges);
-    }
-
-    void BatchedExecutionEngine::forward_OoC(VariableIndex upto)
-    {
-        if (profiling_flag > 1)
-        {
-            int sum_cnt = 0;
-            for (int j = num_nodes_evaluated; j <= upto; ++j)
-            {
-                int type = cg.sigmap.sig2type(cg.nodes[j]->autobatch_sig(cg, cg.sigmap));
-                if (type == op_type::sum)
-                    sum_cnt++;
-            }
-            fprintf(stdout, "sum: %d\n", sum_cnt);
-        }
-        // global_timer.clear();
-        global_timer.start("total");
-        num_batch_committed = num_batches_evaluated;
-        const size_t uptop1 = upto + 1;
-        nfx_cache.resize(uptop1);
-        node2batch.resize(uptop1, -1);
-        node2offset.resize(uptop1, 0);
-        batches.resize(upto - num_nodes_evaluated + num_batches_evaluated + 1);
-
-        memory_affinity.resize(cg.snodes.size(), 0);
-
-        if (profiling_flag > 1)
-        {
-            node2mem_pos.resize(uptop1, 0);
-            mem_id = 0;
-        }
-
-        // Create the necessary info for batching in the future
-        // construct_snode_graph_OoC(upto);
-        int old_num_nodes_evaluated = num_nodes_evaluated;
-        // if (cg.schedule_mode == INFERENCE)
-        //     fprintf(stdout, "[OoC::exec]: inference\n");
-        // else
-        //     fprintf(stdout, "[OoC::exec]: train\n");
-        fprintf(stdout, "[OoC::exec]: schedule by %s\n", schedule_alg.c_str());
-        schedule_snode_graph(schedule_alg);
-        start_indices.push_back(num_batch_committed);
-
-        if (profiling_flag > 1)
-        {
-            fprintf(stdout, "start_indices: ");
-            for (size_t i = 0; i < start_indices.size(); i++)
-            {
-                fprintf(stdout, "(%ld, %d), ", i, start_indices[i]);
-            }
-            fprintf(stdout, "\n");
-            vector<bool> visited(uptop1, false);
-            for (int bid = old_num_nodes_evaluated; bid != num_batch_committed; bid++)
-            {
-                assert(batches[bid].nfx.v);
-                int sig = cg.nodes[batches[bid].ids.front()]->autobatch_sig(cg, cg.sigmap);
-                for (auto id : batches[bid].ids)
-                {
-                    assert(sig == cg.nodes[id]->autobatch_sig(cg, cg.sigmap));
-                    visited[id] = true;
-                }
-            }
-            function<int(int)> get_sid = [&](int bid)
-            {
-                int ret = 0;
-                while (start_indices[ret] <= bid)
-                    ret++;
-                return ret - 1;
-            };
-            for (int i = old_num_nodes_evaluated; i <= upto; i++)
-            {
-                if (!visited[i] || !(node2batch[i] >= 0))
-                {
-                    fprintf(stderr, "[OoC::error]: nid %d, bid %d, old_num_nodes_evaluated %d, upto %d, num_batch_commited %d\n",
-                            i, node2batch[i], old_num_nodes_evaluated, upto, num_batch_committed);
-                }
-                assert(visited[i]);
-                assert(node2batch[i] >= 0);
-                assert(node2batch[i] < num_batch_committed);
-
-                const Node *node = cg.nodes[i];
-                auto this_sbid = get_sid(node2batch[i]);
-                for (auto arg : node->args)
-                {
-                    auto that_sbid = get_sid(node2batch[arg]);
-                    if (this_sbid == that_sbid)
-                    {
-                        if (node2batch[i] <= node2batch[arg])
-                        {
-                            int this_type = cg.sigmap.sig2type(cg.nodes[i]->autobatch_sig(cg, cg.sigmap));
-                            int that_type = cg.sigmap.sig2type(cg.nodes[arg]->autobatch_sig(cg, cg.sigmap));
-                            fprintf(stdout, "num_batch_committed %d\n", num_batch_committed);
-                            fprintf(stdout, "node %d %s %d; input %d %s %d\n", i, type2name[this_type].c_str(), node2batch[i], arg, type2name[that_type].c_str(), node2batch[arg]);
-                        }
-                        assert(node2batch[i] > node2batch[arg]);
-                    }
-                    else
-                    {
-                        if (this_sbid > that_sbid)
-                        {
-                            int this_type = cg.sigmap.sig2type(cg.nodes[i]->autobatch_sig(cg, cg.sigmap));
-                            int that_type = cg.sigmap.sig2type(cg.nodes[arg]->autobatch_sig(cg, cg.sigmap));
-                            fprintf(stdout, "num_batch_committed %d\n", num_batch_committed);
-                            fprintf(stdout, "node %d %s %d; input %d %s %d\n", i, type2name[this_type].c_str(), node2batch[i], arg, type2name[that_type].c_str(), node2batch[arg]);
-                            fprintf(stdout, "thisbid: %d\n", this_sbid);
-                            assert(this_sbid >= 0);
-                            for (int bid = start_indices[this_sbid]; bid < start_indices[this_sbid + 1]; bid++)
-                            {
-                                fprintf(stdout, "\tbid %d: ", bid);
-                                for (auto id : batches[bid].ids)
-                                {
-                                    int type = cg.sigmap.sig2type(cg.nodes[id]->autobatch_sig(cg, cg.sigmap));
-                                    fprintf(stdout, "(%d, %s), ", id, type2name[type].c_str());
-                                }
-                                fprintf(stdout, "\n");
-                            }
-                            fprintf(stdout, "thatbid: %d\n", that_sbid);
-                            assert(that_sbid >= 0);
-                            for (int bid = start_indices[that_sbid]; bid < start_indices[that_sbid + 1]; bid++)
-                            {
-                                fprintf(stdout, "\tbid %d: ", bid);
-                                for (auto id : batches[bid].ids)
-                                {
-                                    int type = cg.sigmap.sig2type(cg.nodes[id]->autobatch_sig(cg, cg.sigmap));
-                                    fprintf(stdout, "(%d, %s), ", id, type2name[type].c_str());
-                                }
-                                fprintf(stdout, "\n");
-                            }
-                        }
-                        assert(this_sbid < that_sbid);
-                    }
-                }
-            }
-            for (auto &stype : cg.stypes)
-            {
-                assert(stype.frontiers.size() == 0);
-                // assert(stype.cnt == 0);
-            }
-            fprintf(stdout, "[OoC::check]: [%d, %d], dependency test passed!\n", old_num_nodes_evaluated, upto);
-        }
-        fprintf(stdout, "OoC: commit %d batch\n", num_batch_committed);
-        global_timer.log("n_kernel", num_batch_committed);
-        global_timer.cumint("n_kernels", num_batch_committed);
-        global_timer.start("execution");
-        execution(upto);
-        global_timer.stop("execution");
-        assert(num_batch_committed == num_batches_evaluated);
-        global_timer.stop("total");
-        graph_id++;
-        return;
-    }
-
-    void BatchedExecutionEngine::visualize_snode(int upto, string filename, std::string graphname, std::unordered_set<std::pair<int, int>, hash_pair> *mem_transfer_edges)
-    {
-        if (profiling_flag <= 1)
-            return;
-        ofstream file;
-        file.open(filename);
-        file << "digraph " << graphname << "{\n";
-        function<string(int)> getName = [&](int sid)
-        {
-            return "S" + to_string(sid) + "_" + to_string(cg.snodes[sid]->type) + "_" + to_string(cg.snodes[sid]->bid);
-        };
-
-        unordered_map<int, string> bid2color;
-        int nid = num_nodes_evaluated;
-        file << "\tnode [style=filled]\n";
-        while (nid <= upto)
-        {
-            int sid = cg.nid2sid[nid];
-            if (sid < 0)
-            {
-                nid++;
-                continue;
-            }
-            unordered_map<int, bool> preds;
-            while (nid <= upto && cg.nid2sid[nid] == sid)
-            {
-                for (auto arg : cg.nodes[nid]->args)
-                {
-                    int that_sid = cg.nid2sid[arg];
-                    if (that_sid < 0)
-                        continue;
-                    if (preds.count(that_sid) == 0)
-                        preds[that_sid] = false;
-                    if (mem_transfer_edges && mem_transfer_edges->count({arg, nid}) != 0)
-                    {
-                        preds[that_sid] = true;
-                    }
-                }
-                nid++;
-            }
-            auto this_name = getName(sid);
-            for (auto &kv : preds)
-            {
-                file << "\t" << getName(kv.first) << "->" << this_name;
-                if (kv.second)
-                    file << "\t[color=\"red\"]";
-                file << endl;
-            }
-            int bid = cg.snodes[sid]->bid;
-            if (bid2color.count(bid) == 0)
-            {
-                char tmp[10];
-                sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
-                bid2color[bid] = string(tmp);
-            }
-            file << this_name << "\t[color=\"" << bid2color[bid] << "\"]" << endl;
-        }
-
-        file << "}\n";
-    }
-
-    void BatchedExecutionEngine::export_graph(VariableIndex upto, string filename)
-    {
-        // bid n_input inputs
-        if (profiling_flag <= 2)
-            return;
-        ofstream file;
-        file.open(filename);
-        file << upto + 1 << " " << num_batches_evaluated << endl;
-        for (VariableIndex j = 0; j <= upto; j++)
-        {
-            auto node = cg.nodes[j];
-            file << j << " " << cg.nid2sid[j] << " " << node2batch[j] << " " << node->args.size();
-            for (auto arg : node->args)
-            {
-                file << " " << arg;
-            }
-            file << endl;
-        }
-        file.close();
-    }
-
-    void BatchedExecutionEngine::export_snode_graph(string filename)
-    {
-        if (profiling_flag <= 2)
-            return;
-        ofstream file;
-        file.open(filename);
-        file << cg.snodes.size() << endl;
-        int sid = 0;
-        for (auto &snode : cg.snodes)
-        {
-            file << snode->type << " " << snode->succs.size() << " ";
-            for (auto succ : snode->succs)
-                file << succ << " ";
-            file << endl;
-        }
-        file.close();
-    }
-
-    void BatchedExecutionEngine::schedule_snode_graph(std::string scheduler_type)
-    {
-        global_timer.start("scheduling");
-        global_timer.start("scheduling::init");
-        OoC::StaticScheduler *scheduler;
-        if (scheduler_type == "typewise_lb")
-            scheduler = new OoC::TypewiseLBScheduler(cg.snodes, cg.stypes);
-        else if (scheduler_type == "dynet")
-            scheduler = new OoC::DynetScheduler(cg.snodes, cg.stypes);
-        else if (scheduler_type == "tffold")
-            scheduler = new OoC::TFFoldScheduler(cg.snodes, cg.stypes);
-        else if (scheduler_type == "rl")
-            scheduler = new OoC::LearnableScheduler(cg.snodes, cg.stypes);
-        else
-            assert(false);
-        global_timer.stop("scheduling::init");
-
-        vector<int> batch;
-        while (scheduler->get_next_batch(batch))
-        {
-            commit_batch_OoC(batch);
-            batch.clear();
-        }
-        delete scheduler;
-        global_timer.stop("scheduling");
-    }
-
     void BatchedExecutionEngine::visualize(int upto, string filename, string graphname, unordered_set<pair<int, int>, hash_pair> *mem_transfer_edges)
     {
         if (profiling_flag <= 0)
@@ -730,8 +31,6 @@ namespace dynet
         {
             auto sig = cg.nodes[nid]->autobatch_sig(cg, cg.sigmap);
             string ret = OoC::type2name[cg.sigmap.sig2type(sig)] + to_string(sig) + "_" + to_string(nid) + "_" + to_string(node2batch[nid]);
-            if (memory_affinity.size())
-                ret += "_" + to_string(memory_affinity[nid] < 0 ? 0 : memory_affinity[nid]);
             // if (autobatch_flag == 7 && profiling_flag > 1)
             //     ret += "_" + to_string(node2mem_pos[nid]) + "_" + to_string(cg.nid2sid[nid]);
             return ret;
@@ -768,228 +67,208 @@ namespace dynet
             }
             file << "\t" << getName(nid) << "\t[color=\"" << bid2color[bid] << "\"];\n";
         }
-
-        if (autobatch_flag == 7)
-        {
-            int nid = num_nodes_evaluated;
-            unordered_map<int, string> bid2color;
-            while (nid <= upto)
-            {
-                int sid = cg.nid2sid[nid];
-                if (sid == -1)
-                {
-                    nid++;
-                    continue;
-                }
-                int bid = cg.snodes[sid]->bid;
-                if (bid2color.count(bid) == 0)
-                {
-                    char tmp[10];
-                    sprintf(tmp, "#%2x%2x%2x", rand() & 0xff, rand() & 0xff, rand() & 0xff);
-                    bid2color[bid] = string(tmp);
-                }
-                while (nid <= upto && cg.nid2sid[nid] == sid)
-                {
-                    file << "\t" << getName(nid) << "\t[color=\"" << bid2color[bid] << "\"];\n";
-                    nid++;
-                }
-            }
-        }
-
+        
         file << "}\n";
         file.close();
         return;
     }
 
-    void BatchedExecutionEngine::pre_malloc(VariableIndex batch_id)
+    struct node_t
     {
-        if (!do_pre_malloc)
-            return;
+        int type;
+        vector<VariableIndex> args;
+        bool invalid = true;
+        int succ_cnt = 0;
+        vector<VariableIndex> typewise_args;
+        int typewise_succ_cnt = 0;
+    };
 
-        global_timer.start("pre_alloc");
-
-        std::vector<std::vector<std::vector<int>>> patterns;
-
-        for (VariableIndex bid = num_batches_evaluated; bid < batch_id; ++bid)
-        {
-            auto &batch = batches[bid];
-            int n_arg = cg.nodes[batch.ids.front()]->args.size();
-            for (int aid = 0; aid < n_arg; ++aid)
-            {
-                std::vector<std::vector<int>> pattern;
-                pattern.push_back({});
-                for (auto id : batch.ids)
-                    pattern.back().push_back(id);
-                pattern.push_back({});
-                for (auto nid : batch.ids)
-                    pattern.back().push_back(cg.nodes[nid]->args[aid]);
-                patterns.push_back(move(pattern));
-            }
-        }
-
-        list<int> mem_order;
-
-        if (do_pre_malloc == 1)
-        {
-            IsoPQTree tree((int)cg.nodes.size());
-            // sort(patterns.begin(), patterns.end(), [](const std::vector<std::vector<int>> &p1, std::vector<std::vector<int>> &p2)
-            //  { return p1.front().size() < p2.front().size(); });
-            bool succ = tree.IsoReduceAll(patterns);
-            if (!succ)
-                cerr << "[WARNING]: memory allocation not complete." << endl;
-            mem_order = tree.Frontier();
-        }
-        else if (do_pre_malloc == 2)
-        {
-            for (VariableIndex bid = num_batches_evaluated; bid < batch_id; ++bid)
-            {
-                for (auto id : batches[bid].ids)
-                {
-                    mem_order.push_back(id);
-                }
-            }
-        }
-
-        vector<size_t> offsets(mem_order.size());
-
-        size_t memsize = 0;
-        int bid = -1;
-        std::vector<VariableIndex>::iterator batch_iter;
-        std::vector<size_t>::iterator offset_iter = offsets.begin();
-        for (auto nid : mem_order)
-        {
-            if (pre_allocated[nid])
-                continue;
-            auto node = cg.nodes[nid];
-            if (!node->is_function)
-            { // do not allocate memory for function node
-                *offset_iter++ = memsize;
-                memsize += node2size[nid];
-            }
-            if (node2batch[nid] != bid)
-            {
-                assert(bid < 0 || batch_iter == batches[bid].ids.end());
-                bid = node2batch[nid];
-                batch_iter = batches[bid].ids.begin();
-            }
-            *batch_iter++ = nid;
-        }
-
-        auto mempool = cg.nodes.front()->device->pools[(int)DeviceMempool::FXS];
-        float *base;
-        if (do_pre_malloc == 1 || do_pre_malloc == 2)
-            base = (float *)mempool->allocate(memsize * sizeof(float));
-
-        bid = -1;
-        offset_iter = offsets.begin();
-        for (auto nid : mem_order)
-        {
-            if (pre_allocated[nid] || cg.nodes[nid]->is_function)
-                continue;
-            if (do_pre_malloc == 3 && node2batch[nid] != bid)
-            {
-                bid = node2batch[nid];
-                size_t memsize = 0;
-                for (auto id : batches[bid].ids)
-                    memsize += node2size[id];
-                base = (float *)mempool->allocate(memsize * sizeof(float)) - *offset_iter;
-            }
-            auto &t = nfx_cache[nid];
-            auto node = cg.nodes[nid];
-            t.v = base + *offset_iter++;
-            t.d = node->dim;
-            t.mem_pool = DeviceMempool::FXS;
-            t.device = node->device;
-            pre_allocated[nid] = true;
-        }
-
-        global_timer.stop("pre_alloc");
-    }
-
-    void BatchedExecutionEngine::pre_allocate_input(const vector<VariableIndex> &batch)
+    struct type_t
     {
-        // cout << "[pre_alloc]: ";
-        // for (auto id: batch) cout << id << ",";
-        // cout << endl;
-        auto autobatch_concat = cg.nodes[batch.front()]->autobatch_concat(cg);
-        for (int aid = 0; aid < autobatch_concat.size(); ++aid){
-            if (autobatch_concat[aid]){
-                for (auto nid: batch){
-                    int arg = cg.nodes[nid]->args[aid];
-                    if (!pre_allocated[arg]) {
-                        pre_allocated[arg] = true;
-                        pre_allocate_nodes.push_back(arg);
+        vector<VariableIndex> frontiers;
+        int typewise_frontier_cnt = 0;
+        int min_nid = -1;
+    };
+
+    void BatchedExecutionEngine::getBatches_typewiseLB(
+        VariableIndex upto,
+        VariableIndex &batch_id)
+    {
+        assert(num_nodes_evaluated == 0);
+        global_timer.start("schedule::preparation");
+        vector<node_t> nodes(upto + 1);
+        unordered_map<int, type_t> types;
+        int fake_type = 0;
+        for (VariableIndex nid = 0; nid <= upto; ++nid)
+        {
+            auto node = cg.nodes[nid];
+            int type = node->autobatch_sig(cg, cg.sigmap);
+            type = type == 0 ? --fake_type : type;
+            nodes[nid].type = type;
+            nodes[nid].args = node->args;
+            nodes[nid].invalid = node->is_get;
+            for (auto &arg : nodes[nid].args)
+                if (cg.nodes[arg]->is_get)
+                    arg = cg.nodes[arg]->args[0];
+            if (types[type].min_nid < 0)
+                types[type].min_nid = nid;
+        }
+        global_timer.stop("schedule::preparation");
+
+        vector<future<double>> results;
+        global_timer.start("schedule::compute G_t");
+        int n_thread = 16;
+        int per_thread_work = (upto + n_thread - 1) / n_thread;
+        for (int o = 0; o < (int)nodes.size(); o += per_thread_work)
+        {
+            results.emplace_back(async([this, o, per_thread_work, &types, &nodes]
+                                       {
+                priority_queue<VariableIndex> Q;
+                double node_explored=0.0;
+                for (int nid = o; nid < std::min(o+per_thread_work, (int)nodes.size()); nid++){
+                    auto& node = nodes[nid];
+                    if (node.invalid) continue;
+                    if (node.type >= 0 && node.type < cg.types.size() && 
+                        !cg.types[node.type].self_reachable)
+                        continue;
+                    int min_nid = types[node.type].min_nid;
+                    for(auto arg: node.args)
+                        if (arg >= min_nid)Q.push(arg);
+                    while(!Q.empty()){
+                        node_explored++;
+                        VariableIndex idx = Q.top();
+                        while(!Q.empty() && Q.top() == idx) Q.pop();
+                        if (nodes[idx].type == node.type){
+                            node.typewise_args.push_back(idx);
+                        }
+                        else {
+                            for (auto arg: nodes[idx].args){
+                                if(arg >= min_nid) Q.push(arg);
+                            }
+                        }
                     }
                 }
+                return node_explored; }));
+        }
+        double ave_explored = 0;
+        for (auto &res : results)
+            ave_explored += res.get();
+        global_timer.cumint("ave_explored", ave_explored / nodes.size());
+        global_timer.stop("schedule::compute G_t");
+
+        for (int nid = nodes.size() - 1; nid >= 0; --nid)
+        {
+            auto &node = nodes[nid];
+            if (node.invalid)
+                continue;
+            for (auto arg : nodes[nid].args)
+                nodes[arg].succ_cnt++;
+            for (auto arg : nodes[nid].typewise_args)
+                nodes[arg].typewise_succ_cnt++;
+            auto &type = types[nodes[nid].type];
+            if (node.succ_cnt == 0)
+                type.frontiers.push_back(nid);
+            if (node.typewise_succ_cnt == 0)
+                type.typewise_frontier_cnt += 1;
+        }
+
+        global_timer.start("scheule::get batches");
+        // memory_affinity.resize(nodes.size());
+        // for (int nid = 0; nid < (int)memory_affinity.size(); ++nid)
+        //     memory_affinity[nid] = nid;
+        // memory_affinity_tag = nodes.size();
+        vector<vector<VariableIndex>> reversed_batches;
+        list<int> active_types;
+        for (auto &kv : types)
+            if (kv.second.frontiers.size())
+                active_types.push_back(kv.first);
+        int idx = 0;
+        while (active_types.size())
+        {
+            double best_score = 0;
+            list<int>::iterator this_tid = active_types.end();
+            for (auto iter = active_types.begin(); iter != active_types.end(); ++iter)
+            {
+                assert(types[*iter].frontiers.size());
+                assert(types[*iter].typewise_frontier_cnt);
+                double score = types[*iter].frontiers.size() / (double)types[*iter].typewise_frontier_cnt;
+                if (best_score < score)
+                {
+                    best_score = score;
+                    this_tid = iter;
+                }
             }
+            assert(this_tid != active_types.end());
+            auto &type = types[*this_tid];
+            active_types.erase(this_tid);
+            type.typewise_frontier_cnt -= type.frontiers.size();
+
+            if (cg.nodes[type.frontiers.front()]->is_function)
+            { // function node
+                int nid = type.frontiers.front();
+                FunctorNode *node = static_cast<FunctorNode *>(cg.nodes[nid]);
+                for (int i = node->n_output; i >= 1; --i)
+                {
+                    vector<VariableIndex> get_node_batch(type.frontiers);
+                    for (auto &nid : get_node_batch)
+                    {
+                        nid += i;
+                    }
+                    reversed_batches.push_back(move(get_node_batch));
+                }
+            }
+
+            reversed_batches.push_back(move(type.frontiers));
+            assert(type.frontiers.size() == 0);
+            int idx = 0, aid;
+            for (auto id : reversed_batches.back())
+            {
+                for (auto arg : nodes[id].args)
+                {
+                    auto &input_node = nodes[arg];
+                    if (--input_node.succ_cnt == 0)
+                    {
+                        if (!types[input_node.type].frontiers.size())
+                        {
+                            active_types.push_back(input_node.type);
+                        }
+                        types[input_node.type].frontiers.push_back(arg);
+                    }
+                }
+                for (auto arg : nodes[id].typewise_args)
+                {
+                    auto &input_node = nodes[arg];
+                    if (--input_node.typewise_succ_cnt == 0)
+                    {
+                        types[input_node.type].typewise_frontier_cnt++;
+                    }
+                }
+                idx++;
+            }
+        }
+        global_timer.stop("Scheule::get batches");
+
+        for (auto iter = reversed_batches.rbegin(); iter != reversed_batches.rend(); iter++)
+        {
+            for (auto id : *iter)
+                node2batch[id] = batch_id;
+            batches[batch_id++].ids = move(*iter);
+        }
+
+        if (profiling_flag > 2)
+        {
+            cout << "*****************batch strategy 8***********" << endl;
+            for (VariableIndex bid = num_batches_evaluated; bid < batch_id; bid++)
+            {
+                cout << "BID" << bid << "\t:";
+                for (auto id : batches[bid].ids)
+                    cout << cg.nodes[id]->as_dummy_string() << ",";
+                cout << endl;
+            }
+            cout << "***************batch strategy end***********" << endl;
         }
 
         return;
-    
-        unordered_map<int, int> partial_order_fwd;
-        unordered_map<int, int> partial_order_bwd;
-        for (int aid = 0; aid < autobatch_concat.size(); ++aid){
-            if (autobatch_concat[aid]){
-                for (auto nid: batch) {
-                    int arg = cg.nodes[nid]->args[aid];
-                    partial_order_fwd[arg] = partial_order_bwd[arg] = -1;
-                }
-            }
-        }
-
-        for (int aid = 0; aid < autobatch_concat.size(); ++aid){
-            if (autobatch_concat[aid])
-            {
-                int prev = cg.nodes[batch.front()]->args[aid];
-                for (int i = 1; i < batch.size(); ++i)
-                {
-                    int next = cg.nodes[batch[i]]->args[aid]; 
-                    auto& fwd = partial_order_fwd[prev];
-                    auto& bwd = partial_order_bwd[next];
-                    if ((fwd != -1 && fwd != next) || (bwd != -1 && bwd != prev)) { // not one-out, one-in 
-                        // cout << "[pre_alloc]: stop alloc because of non 1in 1out" << endl;
-                        return;
-                    }
-                    fwd = next;
-                    bwd = prev;
-                    prev = next;
-                }
-            }
-        }
-
-        // cout << "fwd:";
-        // for (auto &kv: partial_order_fwd) cout << "(" << kv.first << "," << kv.second << "),";
-        // cout << endl;
-        // cout << "bwd:";
-        // for (auto &kv: partial_order_bwd) cout << "(" << kv.first << "," << kv.second << "),";
-        // cout << endl;
-
-        // cout << "[pre_allocate]: order:";
-        unordered_set<int> visited;
-        for (auto &kv:partial_order_fwd){
-            int nid = kv.first;
-            if (visited.count(nid)) continue; 
-            visited.insert(nid);
-            while(partial_order_bwd[nid] != -1){
-                nid = partial_order_bwd[nid];
-                if (visited.count(nid)) {
-                    // cout << "[pre_alloc]: return due to cycle" << endl;
-                    return; // cycle detected!
-                }
-                visited.insert(nid);
-            }
-            pre_allocated[nid] = true;
-            pre_allocate_nodes.push_back(nid);
-            // cout << nid << " ";
-            while(partial_order_fwd[nid] != -1){
-                nid = partial_order_fwd[nid];
-                visited.insert(nid);
-                pre_allocated[nid] = true;
-                pre_allocate_nodes.push_back(nid);
-            }
-        }
-        // cout << endl;
-
-        
     }
+
 } // namespace dynet

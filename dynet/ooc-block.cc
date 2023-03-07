@@ -1,4 +1,4 @@
-#include "dynet/ooc-computation_graph.h"
+#include "dynet/ooc-block.h"
 #include "dynet/devices.h"
 #include "dynet/timing.h"
 #include "dynet/expr.h"
@@ -13,195 +13,183 @@ using namespace std;
 using namespace OoC;
 using namespace dynet;
 
+// extension to dynet's computation graph 
+namespace dynet
+{
+    SigMap ComputationGraph::sigmap;                // static of computation graph
+    PatternCache ComputationGraph::pattern_cache;   // static of computation graph
+
+    void ComputationGraph::export_graph(string filename){
+        ofstream file;
+        file.open(filename);
+        file << nodes.size() << endl;
+        for (auto &node: nodes){
+            file << node->autobatch_sig(*this,sigmap) << " " << node->args.size();
+            for (auto arg: node->args) 
+                file << " " << arg;
+            file << endl;
+        }
+        file.close();
+    }
+
+    void ComputationGraph::export_dot_graph(string filename){
+        ofstream file;
+        file.open(filename);
+        file << "digraph {" << endl;
+        file << "subgraph G0 {\n";
+        {
+            auto get_name = [this](int nid) {
+                return type2name[sigmap.sig2type(nodes[nid]->autobatch_sig
+                    (*this, sigmap))] + "_" + to_string(nid);
+            };
+            unordered_map<int, string> colormap;
+            auto get_color = [&colormap](int type) {
+                if (colormap.count(type) == 0){
+                    char tmp[20];
+                    sprintf(tmp, "#%6x", rand()%0xffffff);
+                    colormap[type] = string(tmp);
+                } 
+                return colormap[type];
+            };
+            for (int nid = 0; nid < nodes.size(); nid++){
+                string name = get_name(nid);
+                string color = get_color(nodes[nid]->autobatch_sig(*this, sigmap));
+                file << name << " [color=\"" << color << "\"];" << endl; 
+                for (auto arg: nodes[nid]->args){
+                    file << get_name(arg) << " -> " << name << ";" << endl;
+                }
+            }
+        }
+        file << "}\n";
+        file << "subgraph G1{\n";
+        {
+            auto get_name = [this](int nid) {
+                return "S" + to_string(nid);
+            };
+            unordered_map<int, string> colormap;
+            auto get_color = [&colormap](int type) {
+                if (colormap.count(type) == 0){
+                    char tmp[20];
+                    sprintf(tmp, "#%6x", rand()%0xffffff);
+                    colormap[type] = string(tmp);
+                } 
+                return colormap[type];
+            };
+        }
+        file << "}\n";
+        file << "}\n";
+
+        file.close();
+    }
+
+    void ComputationGraph::print_unbatchables(){
+        fprintf(stdout, "-------------unbatchables--------------\n");
+        for (auto node: nodes){
+            auto type = node->autobatch_sig(*this, sigmap);
+            if (!type) {
+                fprintf(stdout, "%s\n", node->as_dummy_string().c_str());
+            }
+        }
+        fprintf(stdout, "---------------------------------------\n");
+    }
+
+    void ComputationGraph::show_nodes(){
+        // if (profiling_flag < 2) return;
+        cout << "-------------------Show Nodes--------------------" << endl;
+        int nid = 0;
+        for (auto node: nodes){
+            vector<string>args;
+            for (auto arg: node->args) args.push_back(to_string(arg));
+            cout << "[node " << nid << ","<<node->dim << "]: " << node->as_string(args) << endl;
+            nid++;
+        }
+        cout << "----------------Show Nodes End-------------------" << endl;
+    }
+
+    // OoC's extension to dynet's computation graph
+    void ComputationGraph::gen_cdfg(bool draw, string prefix){
+        vector<int> node_types(nodes.size());
+        int nid = 0;
+        queue<string> block_names;
+        for (auto node: nodes) {
+            int old_size = sigmap.size();
+            node_types[nid] = node->autobatch_sig(*this, sigmap);
+            if (old_size != sigmap.size() && sigmap.sig2type(node_types[nid]) == nt::block){
+                block_names.push(static_cast<FunctorNode*>(node)->block->name);
+            }
+            nid++;
+        }
+        types.resize(sigmap.size());
+        int tid = 0;
+        for (auto & t:types){
+            int node_type = sigmap.sig2type(tid);
+            t.name = OoC::type2name[node_type];
+            if (node_type == nt::block) {
+                assert(!block_names.empty());
+                t.name = block_names.front();
+                block_names.pop();
+            }
+            t.name += to_string(tid);
+            ++tid;
+        }
+        nid = 0;
+        int n_edge = 0;
+        int n_total = 0;
+        for (auto node: nodes) {
+            auto& type = types[node_types[nid]];
+            type.cnt++;
+            for (auto arg: node->args){
+                int t = node_types[arg];
+                if (find(type.args.begin(), type.args.end(), t) == type.args.end()){ 
+                    n_edge++;
+                    type.args.push_back(t);
+                }
+            }
+            n_total += node->args.size();
+            nid++;
+        }
+        cout << "CG nodes:" << nodes.size() 
+            << ",CG edges:" << n_total 
+            << ",CDFG nodes:" << types.size() 
+            << ",CDFG edges:" << n_edge << endl;
+
+        // use floyd method to find all nodes with self-circle;
+        // (i->j,k) = U_(l \in args(j))(i->l, k-1)
+        bool* reachable = new bool[types.size() * types.size()];
+        memset(reachable, 0, sizeof(bool) * types.size() * types.size());
+        for (int j = 0; j < types.size(); ++j) 
+            for (auto arg: types[j].args) reachable[arg*types.size()+j] = true;
+        for (int k = 0; k < (int)types.size(); k++)
+            for (int i = 0; i < (int)types.size(); i++){
+                for (int j = 0; j < (int)types.size(); j++){
+                    for (auto arg: types[j].args){
+                        reachable[i*types.size()+j] |= reachable[i*types.size()+arg];
+                    }
+                }
+            }
+        for (int i = 0; i < types.size(); i++) types[i].self_reachable = reachable[i*types.size()+i];
+        delete reachable;
+
+        if (draw) {
+            ofstream file;
+            file.open("./pics/"+prefix+".gv");
+            file << "digraph G{" << endl;
+            for (auto type: types) {
+                for (auto arg: type.args) {
+                    file << types[arg].name << "->" << type.name << endl;
+                }
+                if (type.self_reachable) 
+                    file << type.name << "[color=\"red\"]" << endl;
+            }
+            file << "}" << endl;
+            file.close();
+        }
+    }
+    std::vector<ComputationGraph::Type> ComputationGraph::types;
+} // namespace dynet
+
 namespace OoC
 {
-    int SuperNode::n_node = 0;
-    int SuperNode::n_sync = 0;
-    std::vector<std::future<void *>> SuperNode::results;
-    ComputationGraph *SuperNode::_cg = nullptr;
-
-    struct async_ret
-    {
-        vector<Node *> nodes;
-        supernodeInfo *snode = nullptr;
-    };
-
-    vector<Expression> SuperNode::operator()(
-        const vector<Expression> &input,
-        const vector<int> &const_params,
-        const vector<int> &runtime_params,
-        bool mark_basic_block)
-    {
-        // global_timer.start("SuperNode::operator()");
-        // global_timer.start("dict lookup");
-        if (profiling_flag > 1)
-        {
-            fprintf(stdout, "[SuperNode::operator()]: n_marked_node %d, nodes.size() %ld\n",
-                    _cg->n_marked_node, _cg->nodes.size());
-        }
-        log_t *log = &params_dict[const_params];
-        // global_timer.stop("dict lookup");
-        assert(log);
-        if (log->first_time)
-        {
-            // global_timer.start("first_time");
-            if (autobatch_flag == 7)
-                log->first_time = false;
-            // synchronize("sync_first_time");
-            // if(autobatch_flag == 7 && _cg->n_marked_node != _cg->nodes.size()){
-            //     _cg->show_nodes();
-            //     _cg->show_log();
-            //     fprintf(stdout, "_cg->n_marked_node %d, _cg->nodes.size() %ld\n", _cg->n_marked_node,
-            //         _cg->nodes.size());
-            //     assert(false);
-            // }
-            log->begin = _cg->n_marked_node;
-            vector<Expression> out;
-            _func(input, const_params, runtime_params, out);
-            log->end = _cg->nodes.size();
-            int i = 0;
-            for (auto &expr : input)
-            {
-                log->nid2aid[expr.i] = i++;
-            }
-            for (auto &expr : out)
-            {
-                log->output_indices.push_back(expr.i - log->begin);
-            }
-            if (mark_basic_block && dynet::autobatch_flag == 7)
-            {
-                log->_stid = _cg->mark_basic_block(false);
-            }
-            n_node += log->end - log->begin;
-            // global_timer.stop("first_time");
-            // global_timer.stop("SuperNode::operator()");
-            return move(out);
-        }
-        // global_timer.start("stype"+to_string(log->_stid));
-        // global_timer.start("prepare_output");
-        int min_nid = _cg->n_marked_node;
-        _cg->n_marked_node += log->end - log->begin;
-        vector<Expression> out;
-        for (auto idx : log->output_indices)
-        {
-            out.push_back(Expression(_cg, min_nid + idx));
-        }
-        // global_timer.stop("prepare_output");
-        // global_timer.start("construct node2args");
-        n_node += log->end - log->begin;
-        vector<int> *_input = new vector<int>;
-        for (auto &expr : input)
-            _input->push_back(expr.i);
-
-        // results.emplace_back(
-        //     pool.submit([_input,min_nid,log,mark_basic_block]{
-        // async_ret * ret = new async_ret;
-        // assert(ret);
-
-        for (int nid = log->begin; nid < log->end; nid++)
-        {
-            bool is_lookup = false;
-            for (auto &lookup_arg : lookup_args)
-            {
-                if ((nid - log->begin) == lookup_arg.nid)
-                {
-                    is_lookup = true;
-                    dynet::lookup(*_cg, *(lookup_arg.p), runtime_params[lookup_arg.param_id]);
-                    break;
-                }
-            }
-            if (is_lookup)
-                continue;
-            Node *node = _cg->nodes[nid]->clone();
-            // ret->nodes.push_back(node);
-            _cg->nodes.push_back(node);
-            for (auto &arg : node->args)
-            {
-                if (log->nid2aid.count(arg))
-                {
-                    if (log->nid2aid[arg] >= _input->size())
-                    {
-                        fprintf(stderr, "[ERROR]: min_nid %d, log->nid2aid[%d] = %d; _input.size() %ld, begin %d, end %d;\n",
-                                min_nid, arg, log->nid2aid[arg], _input->size(), log->begin, log->end);
-                        for (int nid = log->begin; nid < log->end; nid++)
-                        {
-                            fprintf(stderr, "\tnid %d %s\n", nid, _cg->nodes[nid]->as_dummy_string().c_str());
-                        }
-                        assert(false);
-                        // return static_cast<void*>(nullptr);
-                    }
-                    arg = _input->at(log->nid2aid[arg]);
-                }
-                else if (arg >= log->begin)
-                    arg += min_nid - log->begin;
-            }
-        }
-
-        // global_timer.stop("construct node2args");
-        // global_timer.start("construct snode");
-
-        if (mark_basic_block && dynet::autobatch_flag == 7)
-        {
-            _cg->nid2sid.resize(_cg->nodes.size(), _cg->snodes.size());
-            auto snode = new supernodeInfo;
-            _cg->snodes.push_back(snode);
-            snode->min_nid = min_nid;
-            snode->type = log->_stid;
-            // ret->snode = snode;
-        }
-        delete _input;
-        // global_timer.stop("construct snode");
-        //         return static_cast<void*>(ret);
-        //     })
-        // );
-        // global_timer.stop("stype"+to_string(log->_stid));
-        // global_timer.stop("SuperNode::operator()");
-        if (!(_cg->n_marked_node == _cg->nodes.size()))
-        {
-            _cg->show_nodes();
-            fprintf(stdout, "min_nid, log->begin, log->end, _cg->n_marked_node, _cg->nodes.size(): %d, %d, %d, %d, %d\n",
-                    min_nid, log->begin, log->end, _cg->n_marked_node, _cg->nodes.size());
-            for (auto &lookup_arg : lookup_args)
-            {
-                fprintf(stdout, "[lookup_arg]: %d, %d\n", lookup_arg.nid, lookup_arg.param_id);
-            }
-        }
-        assert(_cg->n_marked_node == _cg->nodes.size());
-        return move(out);
-    }
-
-    void SuperNode::synchronize(string info)
-    {
-        global_timer.start("synchronize");
-        n_sync++;
-        for (auto &result : results)
-        {
-            async_ret *ptr = static_cast<async_ret *>(result.get());
-            assert(ptr);
-            // for (int nid = 0; nid < ptr->nodes.size(); nid++){
-            //     int target_nid = reinterpret_cast<FakeNode*>(ptr->nodes.at(nid))->_nid;
-            // }
-            if (profiling_flag > 1)
-                _cg->log.push_back({ComputationGraph::PARA_CONSTRUCT,
-                                    "para_construct",
-                                    _cg->nodes.size(),
-                                    _cg->nodes.size() + ptr->nodes.size(),
-                                    _cg->snodes.size(),
-                                    ptr->snode->type});
-            _cg->nodes.insert(_cg->nodes.end(), ptr->nodes.begin(), ptr->nodes.end());
-            _cg->nid2sid.resize(_cg->nodes.size(), (int)_cg->snodes.size());
-            _cg->snodes.push_back(ptr->snode);
-        }
-        if (results.size())
-            _cg->n_ready_node = _cg->nodes.size();
-        if (profiling_flag > 1)
-            _cg->log.push_back({ComputationGraph::SYNCHRONIZE, info,
-                                _cg->nodes.size(), results.size()});
-        results.clear();
-        global_timer.stop("synchronize");
-    }
-
-
     Expression Block::operator()(
         dynet::ComputationGraph *cg,
         std::unordered_map<std::string, Expression> expr_inputs,
@@ -1315,6 +1303,7 @@ namespace OoC
                                 break;
                         }
                         // we can pre allocate memory for this computation
+                        // TODO: Automate this by PQTree alg.
                         if (opt >= 4 && !gather.contig){
                             auto mempool = nodes.front()->device->pools[(int) DeviceMempool::PS];
                             ptr->v = (float*)mempool->allocate(ptr->d.size() * sizeof(float));

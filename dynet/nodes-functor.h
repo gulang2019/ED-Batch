@@ -3,7 +3,7 @@
 
 #include "dynet/dynet.h"
 #include "dynet/nodes-def-macros.h"
-#include "dynet/ooc-computation_graph.h"
+#include "dynet/ooc-block.h"
 
 using namespace std;
 

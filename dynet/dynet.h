@@ -22,7 +22,7 @@
 #include "dynet/device-structs.h"
 #include "utils.h"
 
-#include "dynet/ooc-mem.h"
+// #include "dynet/ooc-mem.h"
 
 namespace dynet {
 
@@ -489,6 +489,8 @@ struct ComputationGraph {
   // set check_validity variable
   void set_check_validity(bool cv);
 
+
+  // begin extension to dynet
   /**
    * \brief Used for debugging
    */
@@ -502,52 +504,19 @@ struct ComputationGraph {
    */
   unsigned get_id() const { return graph_id; }; 
 
-  /**
-   * \brief allocate some memory
-   */
-  OoC::View* allocate(const Dim& d, const std::vector<int>& dims);
-  
-  /**
-   * \brief allocate some memory
-   */
-  OoC::View* allocate_ragged(const Dim& d, const std::vector<int>& dims, bool transpose = false, bool reverse = false);
-
-  /**
-   * \brief Bind node with memory
-   */
-  void bind(Expression e, OoC::View* view, std::initializer_list<int> indices);
-
-  /**
-   * \brief set batches by user
-   */ 
-  void set_batches(const std::vector<std::vector<Expression> > & batches);
-
   static SigMap sigmap;
-  static std::vector<OoC::typeInfo> stypes;
-  static OoC::Trie<OoC::BBInfo*> head;
   static OoC::PatternCache pattern_cache;
 
-  int n_stored_stypes;
-  int n_new_ops;
-  int n_marked_node = 0;
-  int n_ready_node = 0; // the number of node that is well-constructed
-  std::vector<OoC::supernodeInfo*> snodes;
-  std::vector<int> nid2sid;
   /**
    * \brief the typewise lowerbound of the number of kernels 
    */
   int dynamic_batching_lowerbound();
   /**
-   * \brief the batch sequence 
-   */ 
-  static void dump_batch_sequence(std::string filename);
-  /**
    * \brief visualize the graph
    */ 
   void visualize(std::string filename);
 
-  static std::unordered_map<int, std::vector<std::vector<int> > > batch_sequences;
-
+  /** \brief data structure for pruning when performing typewise lb heuristic*/
   struct Type {
     std::string name;
     std::vector<int> args;
@@ -555,34 +524,23 @@ struct ComputationGraph {
     int cnt = 0;
   };
   static std::vector<Type> types;
+  /** \brief generate the consumer-producer relationship between types*/
   void gen_cdfg(bool draw = false, std::string prefix = "cdfg");
-  void gen_snode_cdfg(bool draw = false, std::string prefix = "cdfg");
+  
   /**
-   * \brief the batchsize for blocked computationgraph  
+   * \brief the batchsize for blocked computationgraph, used for the forward pass of block
    */
   int batch_size = 1;
-  enum debug_log_t{
-    SYNCHRONIZE,
-    PARA_CONSTRUCT,
-    SEQ_CONSTRUCT
-  };
-  struct debug_log{
-    debug_log_t type;
-    std::string info;
-    int begin;
-    int end;
-    int sid;
-    int stid;
-  };
-  std::vector<debug_log> log;
-  int mark_basic_block(bool sync = true);
-  void show_log();
+
+  /**
+   * \brief useful utils for debugging/visualization. 
+  */
   void show_nodes();
-  void construct_snode_graph();
-  void export_snode_graph(std::string filename);
   void export_graph(std::string filename);
   void export_dot_graph(std::string filename);
   void print_unbatchables();
+
+  // stop extension to dynet
 
   // data
   std::vector<Node*> nodes;  // **stored in topological order**

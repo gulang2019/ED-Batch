@@ -69,7 +69,7 @@ void Node::autobatch_reshape_concatonly(const ComputationGraph & cg,
   }
 }
 
-ComputationGraph::ComputationGraph():n_stored_stypes(stypes.size()){
+ComputationGraph::ComputationGraph(){
   if (ooc_autobatch_flag){
     ee.reset(new OoC::Executor(*this));
   }
@@ -89,7 +89,7 @@ ComputationGraph::ComputationGraph():n_stored_stypes(stypes.size()){
   graph_id = n_cumul_hgs;
 }
 
-ComputationGraph::ComputationGraph(bool batched):n_stored_stypes(stypes.size()) {
+ComputationGraph::ComputationGraph(bool batched){
   if(batched) {
     ee.reset(new BatchedExecutionEngine(*this));
   } else {
@@ -106,7 +106,7 @@ ComputationGraph::ComputationGraph(bool batched):n_stored_stypes(stypes.size()) 
   graph_id = n_cumul_hgs;
 }
 
-ComputationGraph::ComputationGraph(dynet::ExecutionEngine* ptr): n_stored_stypes(stypes.size()){
+ComputationGraph::ComputationGraph(dynet::ExecutionEngine* ptr){
   ee.reset(ptr);
   if (n_hgs > 0) {
     // cerr << "Memory allocator assumes only a single ComputationGraph at a time.\n";
@@ -122,7 +122,6 @@ ComputationGraph::ComputationGraph(dynet::ExecutionEngine* ptr): n_stored_stypes
 ComputationGraph::~ComputationGraph() {
   this->clear();
   --n_hgs;
-  for (auto snode: snodes) delete snode;
 }
 
 void ComputationGraph::clear() {
@@ -132,28 +131,6 @@ void ComputationGraph::clear() {
 
   if (ee.get() != nullptr)
     ee->invalidate();
-}
-OoC::View* ComputationGraph::allocate(const Dim&d, const std::vector<int>& dims){
-  assert(ee != nullptr);
-  return ee->allocate(d, dims);
-}
-
-OoC::View* ComputationGraph::allocate_ragged(const Dim& d, const std::vector<int>& dims, bool transpose, bool reverse){
-  assert(ee != nullptr);
-  return ee->allocate_ragged(d, dims, transpose, reverse);
-}
-
-void ComputationGraph::bind(Expression e, OoC::View* view, std::initializer_list<int> indices) {
-  assert(ee != nullptr);
-  std::vector<int> __indices(indices);
-  ee->bind(e.i, view, __indices);}  
-
-void ComputationGraph::set_batches(const std::vector<std::vector<Expression> >& batches){
-  std::vector<std::vector<VariableIndex> > __batches(batches.size());
-  for (size_t i = 0; i < batches.size(); ++i) 
-    for (auto& e: batches[i]) __batches[i].push_back(e.i);
-  assert(ee != nullptr);
-  static_cast<BatchedExecutionEngine*>(ee.get()) -> set_batches(__batches);
 }
 
 VariableIndex ComputationGraph::add_function_node(Node *node, Device *device) {
@@ -562,20 +539,6 @@ int ComputationGraph::dynamic_batching_lowerbound(){
       ret += max_depth;
   }
   return ret;
-}
-
-void ComputationGraph::dump_batch_sequence(std::string dirname){
-  for (auto& kv: batch_sequences){
-    string filename = dirname + "/" + to_string(kv.first) + ".txt";
-    ofstream file;
-    file.open(filename);
-    for (auto& seq: kv.second){
-      for (auto x: seq) 
-        file << x << ",";
-      file << endl;
-    }
-    file.close();  
-  }
 }
 
 void ComputationGraph::visualize(std::string filename) {

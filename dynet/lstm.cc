@@ -624,7 +624,6 @@ Expression VanillaLSTMBuilder::add_input_impl(int prev, const Expression& x) {
       Expression i_aft;
       Expression i_aot;
       Expression i_agt;
-      _cg->mark_basic_block();
       i_ait = pick_range(tmp, 0, hid);
       i_aft = pick_range(tmp, hid, hid * 2);
       i_aot = pick_range(tmp, hid * 2, hid * 3);
@@ -1218,121 +1217,5 @@ void CompactVanillaLSTMBuilder::set_weightnoise(float std) {
   DYNET_ARG_CHECK(std >= 0.f, "weight noise must have standard deviation >=0");
   weightnoise_std = std;
 }
-
-
-void VanillaLSTMBuilder::define_bb()
-{
-  /*
-    bb_affine = new OoC::SuperNode(
-        [&](const vector<Expression> &inputs, const vector<int> &params, const vector<int>&runtime_params, vector<Expression> &outputs)
-        {
-            // assert(params.size() == )
-            assert(inputs.size() == 2);
-            assert(params.size() == 2);
-            Expression in = inputs[0], i_h_tm1 = inputs[1];
-            int i = params[0], has_prev_state = params[1];
-            const vector<Expression>& vars = param_vars[i];
-            Expression tmp;
-            if (ln_lstm)
-            {
-                const vector<Expression> &ln_vars = ln_param_vars[i];
-                if (has_prev_state)
-                    tmp = vars[_BI] + layer_norm(vars[_X2I] * in, ln_vars[LN_GX], ln_vars[LN_BX]) + layer_norm(vars[_H2I] * i_h_tm1, ln_vars[LN_GH], ln_vars[LN_BH]);
-                else
-                    tmp = vars[_BI] + layer_norm(vars[_X2I] * in, ln_vars[LN_GX], ln_vars[LN_BX]);
-            }
-            else
-            {
-                if (has_prev_state)
-                  tmp = affine_transform({vars[_BI], vars[_X2I], in, vars[_H2I], i_h_tm1});
-                else
-                  tmp = affine_transform({vars[_BI], vars[_X2I], in});
-            }
-            outputs.push_back(tmp);
-        },
-        "VanillaLSTM::affine");
-    bb_gates = new OoC::SuperNode(
-      [&](const vector<Expression> &inputs, const vector<int> &params, const vector<int>&runtime_params, vector<Expression> &outputs){
-        assert(inputs.size() == 2);
-        assert(params.size() == 2);
-        Expression tmp = inputs[0], i_c_tm1 = inputs[1]; // input
-        int i = params[0], has_prev_state = params[1]; // input
-        Expression cti, hti; // output
-        
-        Expression i_ait;
-        Expression i_aft;
-        Expression i_aot;
-        Expression i_agt;
-        
-        i_ait = pick_range(tmp, 0, hid);
-        i_aft = pick_range(tmp, hid, hid * 2);
-        i_aot = pick_range(tmp, hid * 2, hid * 3);
-        i_agt = pick_range(tmp, hid * 3, hid * 4);
-        
-        Expression i_it = logistic(i_ait);
-        if (forget_bias != 0.0)
-            tmp = logistic(i_aft + forget_bias);
-        else
-            tmp= logistic(i_aft);
-
-
-        Expression i_ft = tmp;
-        Expression i_ot = logistic(i_aot);
-        Expression i_gt = tanh(i_agt);
-
-        cti = has_prev_state ? (cmult(i_ft, i_c_tm1) + cmult(i_it, i_gt)) :  cmult(i_it, i_gt);
-        if (ln_lstm) {
-          const vector<Expression>& ln_vars = ln_param_vars[i];
-          hti = cmult(i_ot, tanh(layer_norm(cti, ln_vars[LN_GC], ln_vars[LN_BC])));
-        } else
-          hti = cmult(i_ot, tanh(cti));
-        
-        outputs.push_back(cti);
-        outputs.push_back(hti);
-      },
-      "vanillalstm::cell"
-    );
-    */
-
-  // {
-  //   Expression tmp = inputs[0], i_c_tm1 = inputs[1]; // input
-  //   int i = params[0], has_prev_state = params[1]; // input
-  //   Expression cti, hti; // output
-    
-  //   Expression i_ait;
-  //   Expression i_aft;
-  //   Expression i_aot;
-  //   Expression i_agt;
-    
-  //   i_ait = pick_range(tmp, 0, hid);
-  //   i_aft = pick_range(tmp, hid, hid * 2);
-  //   i_aot = pick_range(tmp, hid * 2, hid * 3);
-  //   i_agt = pick_range(tmp, hid * 3, hid * 4);
-    
-  //   Expression i_it = logistic(i_ait);
-  //   if (forget_bias != 0.0)
-  //       tmp = logistic(i_aft + forget_bias);
-  //   else
-  //       tmp= logistic(i_aft);
-
-
-  //   Expression i_ft = tmp;
-  //   Expression i_ot = logistic(i_aot);
-  //   Expression i_gt = tanh(i_agt);
-
-  //   cti = has_prev_state ? (cmult(i_ft, i_c_tm1) + cmult(i_it, i_gt)) :  cmult(i_it, i_gt);
-  //   if (ln_lstm) {
-  //     const vector<Expression>& ln_vars = ln_param_vars[i];
-  //     hti = cmult(i_ot, tanh(layer_norm(cti, ln_vars[LN_GC], ln_vars[LN_BC])));
-  //   } else
-  //     hti = cmult(i_ot, tanh(cti));
-    
-  //   outputs.push_back(cti);
-  //   outputs.push_back(hti);
-  // }
-
-
-}
-
 
 } // namespace dynet

@@ -9,15 +9,10 @@ set(dynet_library_SRCS
     dim.cc
     dynet.cc
     exec.cc
-    exec-ooc.cc
     ooc-executor.cc
     ooc-scheduler.cc
-    ooc-scheduler-rl.cc
     ooc-exec.cc
-    ooc-bbmarker.cc
-    ooc-computation_graph.cc
-    ooc-loop.cc
-    ooc-mem.cc
+    ooc-block.cc
     expr.cc
     fast-lstm.cc
     globals.cc
@@ -175,11 +170,9 @@ training.h
 treelstm.h
 virtual-cudnn.h
 weight-decay.h
-ooc-computation_graph.h
+ooc-block.h
 ooc-executor.h
 ooc-scheduler.h
-ooc-loop.h
-ooc-mem.h
 )
 if(ENABLE_BOOST)
   list(APPEND dynet_library_HDRS mp.h)
