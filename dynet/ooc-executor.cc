@@ -1,6 +1,7 @@
 #include "dynet/ooc-executor.h"
 #include "dynet/nodes-functor.h"
 #include "dynet/ooc-scheduler.h"
+#include "dynet/devices.h"
 
 #ifdef HAVE_CUDA
 #include "dynet/gpu-ops.h"

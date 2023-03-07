@@ -1,5 +1,3 @@
-CUDA_PATH=/usr/local/cuda/targets/x86_64-linux/lib
-EIGEN_PATH=${HOME}/workspace/summer_intern/eigen
 ED_BATCH_BASE=${PWD}/..
 MODELS := $(shell find models -name '*.cc')
 
@@ -9,10 +7,10 @@ OoC_LIB=-lOoC
 # *** Mac or linux
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-  CXX_FLAGS=-std=c++17 -I${ED_BATCH_BASE}/include -I${EIGEN_PATH} -L${ED_BATCH_BASE}/lib -lc++ -Ofast -O2
+  CXX_FLAGS=-std=c++17 -I${ED_BATCH_BASE}/include -L${ED_BATCH_BASE}/lib -lc++ -Ofast -O2
 else
   CC=g++
-  CXX_FLAGS=-std=c++17 -I${ED_BATCH_BASE}/include -I${EIGEN_PATH} -L${ED_BATCH_BASE}/lib -DBOOST_REGEX -lboost_regex -O2 -lpthread 
+  CXX_FLAGS=-std=c++17 -I${ED_BATCH_BASE}/include -L${ED_BATCH_BASE}/lib -DBOOST_REGEX -lboost_regex -O2 -lpthread 
 endif
 
 # The -seq version is commented out for compatibility with master. If using the sequence-ops

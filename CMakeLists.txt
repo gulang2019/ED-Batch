@@ -193,16 +193,6 @@ message("-- Eigen dir is " ${EIGEN3_INCLUDE_DIR})
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
 
-# look for OoC
-# message("cmake module path: ${CMAKE_MODULE_PATH}")
-# find_package(OoC REQUIRED)
-# if (OoC_FOUND)
-#   message("--OoC dir is ${OoC_INCLUDE_DIR}")
-#   include_directories(${OoC_INCLUDE_DIR})
-#   set(LIBS ${LIBS} ${OoC_LIBRARY})
-# else (OoC_FOUND)
-#   message(FATAL_ERROR "OoC not found")
-# endif (OoC_FOUND)
 include_directories(${PROJECT_SOURCE_DIR}/src)
 
 FIND_PACKAGE(Threads REQUIRED)
