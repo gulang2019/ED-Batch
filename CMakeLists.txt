@@ -1,5 +1,5 @@
 project(dynet)
-cmake_minimum_required(VERSION 2.8 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
@@ -194,22 +194,24 @@ find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
 
 # look for OoC
-message("cmake module path: ${CMAKE_MODULE_PATH}")
-find_package(OoC REQUIRED)
-if (OoC_FOUND)
-  message("--OoC dir is ${OoC_INCLUDE_DIR}")
-  include_directories(${OoC_INCLUDE_DIR})
-  set(LIBS ${LIBS} ${OoC_LIBRARY})
-else (OoC_FOUND)
-  message(FATAL_ERROR "OoC not found")
-endif (OoC_FOUND)
-
+# message("cmake module path: ${CMAKE_MODULE_PATH}")
+# find_package(OoC REQUIRED)
+# if (OoC_FOUND)
+#   message("--OoC dir is ${OoC_INCLUDE_DIR}")
+#   include_directories(${OoC_INCLUDE_DIR})
+#   set(LIBS ${LIBS} ${OoC_LIBRARY})
+# else (OoC_FOUND)
+#   message(FATAL_ERROR "OoC not found")
+# endif (OoC_FOUND)
+include_directories(${PROJECT_SOURCE_DIR}/src)
 
 FIND_PACKAGE(Threads REQUIRED)
 set(LIBS ${LIBS} ${CMAKE_THREAD_LIBS_INIT})
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
+
+add_subdirectory(src)
 
 add_subdirectory(dynet)
 
