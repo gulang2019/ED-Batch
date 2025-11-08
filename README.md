@@ -51,3 +51,37 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${PWD}/lib
 
 ## Instruction on code structure 
 ED-Batch's runtime extension is implemented in dynet/. See `dynet/ooc-block.h` for static subgraph optimzization. See `dynet/ooc-executor.h` for the runtime driver. See `dynet/ooc-scheduler.h` for dynamic batching algorithms.  Apart from that, the static optimizations for static subgraph is implemented in `src/`. Class `OoC::PatternCache` in `src/OoC.h` implements the utilities to find best batching/memory allocation policy at compile time. See the PQ-tree stuff in `src/pq-trees`, as well as the test script `src/pq-trees/pqtest.cc`.  
+
+## Contributing
+
+We welcome contributions to ED-Batch! Whether you're fixing bugs, adding new features, or improving documentation, your help is appreciated.
+
+### Getting Started
+
+For detailed guidance on contributing to ED-Batch, please see our comprehensive [Feature Request and Bug Fix Walkthrough](doc/source/feature_request_walkthrough.rst). This document provides step-by-step instructions for:
+
+- Setting up your development environment
+- Identifying and reporting issues
+- Making code changes with examples
+- Testing your contributions using `make test`
+- Creating pull requests
+- Understanding the code review process
+
+### Issue and Pull Request Templates
+
+To help standardize contributions and ensure we have all the information needed to review your work effectively, we provide templates for:
+
+- **Issue reports**: Use the template in `tmp-workflows/ISSUE_TEMPLATE.md` for bug reports and feature requests
+- **Pull requests**: Use the template in `tmp-workflows/PULL_REQUEST_TEMPLATE.md` when submitting your changes
+
+**Note**: These templates are located in the `tmp-workflows` directory. You'll need to manually copy them to your repository's `.github/` directory when creating issues or pull requests on GitHub.
+
+### Quick Start for Contributors
+
+1. Fork the repository and create a feature branch
+2. Set up your development environment following the installation instructions above
+3. Make your changes and add appropriate tests
+4. Run `make test` to ensure all tests pass
+5. Submit a pull request using our PR template
+
+For more detailed information, see our [contributing guidelines](doc/source/contributing.rst) and the comprehensive walkthrough documentation.
