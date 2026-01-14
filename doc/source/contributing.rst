@@ -14,3 +14,5 @@ Below are some guidelines to guarantee consistency.
    code_style
    doc_style
    contributors
+   feature_request_walkthrough
+
